@@ -14,5 +14,9 @@ build/
 reports/
 data/raw/
 data/processed/
+data/splits/
+data/models/
+data/validation/
+data/testing/
 secrets/
 *.log

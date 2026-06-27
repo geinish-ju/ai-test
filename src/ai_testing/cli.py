@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ai_testing.config import (
     config_bool,
+    config_float,
     config_int,
     config_section,
     config_str,
@@ -29,6 +30,14 @@ from ai_testing.data_preprocessing import (
     PreprocessingConfig,
     preprocess_grocery_records,
 )
+from ai_testing.data_splitting import DatasetSplitConfig, split_dataset_records
+from ai_testing.model_testing import AssociationTestConfig, test_association_rules
+from ai_testing.model_training import AssociationRulesConfig, train_association_rules
+from ai_testing.model_validation import (
+    AssociationValidationConfig,
+    AssociationValidationFold,
+    validate_association_rules,
+)
 from ai_testing.sample_data import sample_grocery_order_item_records
 
 
@@ -39,6 +48,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     kosik_config = config_section(acquisition_config, "kosik")
     rohlik_config = config_section(acquisition_config, "rohlik")
     preprocessing_config = config_section(app_config, "data_preprocessing")
+    splitting_config = config_section(app_config, "data_splitting")
+    model_training_config = config_section(app_config, "model_training")
+    association_config = config_section(model_training_config, "association_rules")
+    model_validation_config = config_section(app_config, "model_validation")
+    association_validation_config = config_section(
+        model_validation_config,
+        "association_rules",
+    )
+    model_testing_config = config_section(app_config, "model_testing")
+    association_testing_config = config_section(
+        model_testing_config,
+        "association_rules",
+    )
     default_include_raw = config_bool(acquisition_config, "include_raw", False)
     default_product_enrichment = config_bool(acquisition_config, "product_enrichment", True)
     kosik_product_enrichment = config_bool(
@@ -314,6 +336,261 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
 
+    splitting_parser = subparsers.add_parser(
+        "split-datasets",
+        help="Create train, validation, and test datasets",
+    )
+    splitting_parser.add_argument(
+        "--input",
+        default=config_str(
+            splitting_config,
+            "input",
+            "data/processed/grocery_order_items.json",
+        ),
+        help="Path to preprocessed grocery records",
+    )
+    splitting_parser.add_argument(
+        "--output-dir",
+        default=config_str(
+            splitting_config,
+            "output_dir",
+            "data/splits",
+        ),
+        help="Directory to write train/test and k-fold validation datasets",
+    )
+    splitting_parser.add_argument(
+        "--group-field",
+        default=config_str(splitting_config, "group_field", "basket_id"),
+        help="Field used to keep related rows in the same split",
+    )
+    splitting_parser.add_argument(
+        "--stratify-field",
+        default=config_str(splitting_config, "stratify_field", "shop"),
+        help="Field used to balance group distribution across splits",
+    )
+    splitting_parser.add_argument(
+        "--test-size",
+        type=float,
+        default=config_float(splitting_config, "test_size", 0.2),
+        help="Hold-out test share",
+    )
+    splitting_parser.add_argument(
+        "--n-splits",
+        type=int,
+        default=config_int(splitting_config, "n_splits", 5),
+        help="Number of k-fold validation splits",
+    )
+    splitting_parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=config_int(splitting_config, "random_seed", 42),
+        help="Deterministic split seed",
+    )
+
+    association_parser = subparsers.add_parser(
+        "train-associations",
+        help="Train association rules on the training dataset",
+    )
+    association_parser.add_argument(
+        "--input",
+        default=config_str(
+            association_config,
+            "input",
+            "data/splits/train_validation.json",
+        ),
+        help="Path to training grocery records",
+    )
+    association_parser.add_argument(
+        "--output",
+        default=config_str(
+            association_config,
+            "output",
+            "data/models/association_rules.json",
+        ),
+        help="Path to write association rules model JSON",
+    )
+    association_parser.add_argument(
+        "--basket-field",
+        default=config_str(association_config, "basket_field", "basket_id"),
+        help="Field used as the market basket identifier",
+    )
+    association_parser.add_argument(
+        "--item-field",
+        default=config_str(association_config, "item_field", "product_group"),
+        help="Field used as the item in association rules",
+    )
+    association_parser.add_argument(
+        "--min-support",
+        type=float,
+        default=config_float(association_config, "min_support", 0.02),
+        help="Minimum itemset support ratio in training baskets",
+    )
+    association_parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=config_float(association_config, "min_confidence", 0.2),
+        help="Minimum rule confidence",
+    )
+    association_parser.add_argument(
+        "--min-lift",
+        type=float,
+        default=config_float(association_config, "min_lift", 1.05),
+        help="Minimum rule lift",
+    )
+    association_parser.add_argument(
+        "--max-itemset-size",
+        type=int,
+        default=config_int(association_config, "max_itemset_size", 2),
+        help="Maximum frequent itemset size",
+    )
+    association_parser.add_argument(
+        "--max-rules",
+        type=int,
+        default=config_int(association_config, "max_rules", 100),
+        help="Maximum number of rules to export",
+    )
+    association_parser.add_argument(
+        "--max-itemsets",
+        type=int,
+        default=config_int(association_config, "max_itemsets", 500),
+        help="Maximum number of frequent itemsets to export",
+    )
+
+    association_validation_parser = subparsers.add_parser(
+        "validate-associations",
+        help="Validate association rules across k-fold validation datasets",
+    )
+    association_validation_parser.add_argument(
+        "--folds-dir",
+        default=config_str(
+            association_validation_config,
+            "folds_dir",
+            "data/splits/folds",
+        ),
+        help="Directory containing fold_NN_train and fold_NN_validation files",
+    )
+    association_validation_parser.add_argument(
+        "--output",
+        default=config_str(
+            association_validation_config,
+            "output",
+            "data/validation/association_validation_report.json",
+        ),
+        help="Path to write association validation report JSON",
+    )
+    association_validation_parser.add_argument(
+        "--basket-field",
+        default=config_str(association_validation_config, "basket_field", "basket_id"),
+        help="Field used as the market basket identifier",
+    )
+    association_validation_parser.add_argument(
+        "--item-field",
+        default=config_str(association_validation_config, "item_field", "product_group"),
+        help="Field used as the item in association rules",
+    )
+    association_validation_parser.add_argument(
+        "--min-support",
+        type=float,
+        default=config_float(association_validation_config, "min_support", 0.02),
+        help="Minimum itemset support ratio in fold training baskets",
+    )
+    association_validation_parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=config_float(association_validation_config, "min_confidence", 0.2),
+        help="Minimum rule confidence",
+    )
+    association_validation_parser.add_argument(
+        "--min-lift",
+        type=float,
+        default=config_float(association_validation_config, "min_lift", 1.05),
+        help="Minimum rule lift",
+    )
+    association_validation_parser.add_argument(
+        "--max-itemset-size",
+        type=int,
+        default=config_int(association_validation_config, "max_itemset_size", 2),
+        help="Maximum frequent itemset size",
+    )
+    association_validation_parser.add_argument(
+        "--max-rules",
+        type=int,
+        default=config_int(association_validation_config, "max_rules", 100),
+        help="Maximum number of rules to evaluate per fold",
+    )
+    association_validation_parser.add_argument(
+        "--max-itemsets",
+        type=int,
+        default=config_int(association_validation_config, "max_itemsets", 500),
+        help="Maximum number of frequent itemsets to keep per fold",
+    )
+    association_validation_parser.add_argument(
+        "--top-rules",
+        type=int,
+        default=config_int(association_validation_config, "top_rules", 20),
+        help="Number of strongest validation rules to store per fold",
+    )
+
+    association_test_parser = subparsers.add_parser(
+        "test-associations",
+        help="Test the trained association rules model on the hold-out test dataset",
+    )
+    association_test_parser.add_argument(
+        "--model-input",
+        default=config_str(
+            association_testing_config,
+            "model_input",
+            "data/models/association_rules.json",
+        ),
+        help="Path to a trained association rules model JSON",
+    )
+    association_test_parser.add_argument(
+        "--test-input",
+        default=config_str(
+            association_testing_config,
+            "test_input",
+            "data/splits/test.json",
+        ),
+        help="Path to hold-out test grocery records",
+    )
+    association_test_parser.add_argument(
+        "--output",
+        default=config_str(
+            association_testing_config,
+            "output",
+            "data/testing/association_test_report.json",
+        ),
+        help="Path to write final association test report JSON",
+    )
+    association_test_parser.add_argument(
+        "--basket-field",
+        default=config_str(association_testing_config, "basket_field", "basket_id"),
+        help="Field used as the market basket identifier",
+    )
+    association_test_parser.add_argument(
+        "--item-field",
+        default=config_str(association_testing_config, "item_field", "product_group"),
+        help="Field used as the item in association rules",
+    )
+    association_test_parser.add_argument(
+        "--min-confidence",
+        type=float,
+        default=config_float(association_testing_config, "min_confidence", 0.2),
+        help="Minimum test confidence used to count stable rules",
+    )
+    association_test_parser.add_argument(
+        "--min-lift",
+        type=float,
+        default=config_float(association_testing_config, "min_lift", 1.05),
+        help="Minimum test lift used to count stable rules",
+    )
+    association_test_parser.add_argument(
+        "--top-rules",
+        type=int,
+        default=config_int(association_testing_config, "top_rules", 20),
+        help="Number of strongest test rules to store",
+    )
+
     args = parser.parse_args(parser_argv)
     if args.command == "export-kosik":
         records = _fetch_kosik(args)
@@ -372,6 +649,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "preprocess-data":
         _preprocess_data(args)
+        return 0
+
+    if args.command == "split-datasets":
+        _split_datasets(args)
+        return 0
+
+    if args.command == "train-associations":
+        _train_associations(args)
+        return 0
+
+    if args.command == "validate-associations":
+        _validate_associations(args)
+        return 0
+
+    if args.command == "test-associations":
+        _test_associations(args)
         return 0
 
     return 2
@@ -631,11 +924,256 @@ def _preprocess_data(args: argparse.Namespace) -> None:
     )
 
 
+def _split_datasets(args: argparse.Namespace) -> None:
+    input_path = Path(args.input)
+    output_dir = Path(args.output_dir)
+    records = _read_records(input_path)
+    try:
+        result = split_dataset_records(
+            records,
+            config=DatasetSplitConfig(
+                group_field=str(args.group_field),
+                stratify_field=str(args.stratify_field),
+                test_size=float(args.test_size),
+                n_splits=int(args.n_splits),
+                random_seed=int(args.random_seed),
+            ),
+        )
+    except ValueError as error:
+        raise SystemExit(f"Cannot split datasets: {error}") from error
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    folds_dir = output_dir / "folds"
+    folds_dir.mkdir(parents=True, exist_ok=True)
+
+    train_validation_path = output_dir / "train_validation.json"
+    test_path = output_dir / "test.json"
+    manifest_path = output_dir / "split_manifest.json"
+    _write_json(result.train_validation_records, train_validation_path)
+    _write_json(result.test_records, test_path)
+    for fold in result.folds:
+        fold_prefix = f"fold_{fold.fold_index:02d}"
+        _write_json(fold.train_records, folds_dir / f"{fold_prefix}_train.json")
+        _write_json(fold.validation_records, folds_dir / f"{fold_prefix}_validation.json")
+
+    manifest = {
+        **result.manifest,
+        "outputs": {
+            "train_validation": str(train_validation_path),
+            "test": str(test_path),
+            "manifest": str(manifest_path),
+            "folds_dir": str(folds_dir),
+        },
+    }
+    _write_json(manifest, manifest_path)
+    print(
+        json.dumps(
+            {
+                "input": str(input_path),
+                "output_dir": str(output_dir),
+                "input_record_count": manifest["input_record_count"],
+                "group_count": manifest["group_count"],
+                "train_validation_record_count": manifest["splits"]["train_validation"][
+                    "record_count"
+                ],
+                "test_record_count": manifest["splits"]["test"]["record_count"],
+                "n_splits": manifest["parameters"]["n_splits"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def _train_associations(args: argparse.Namespace) -> None:
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+    records = _read_records(input_path)
+    try:
+        result = train_association_rules(
+            records,
+            config=AssociationRulesConfig(
+                basket_field=str(args.basket_field),
+                item_field=str(args.item_field),
+                min_support=float(args.min_support),
+                min_confidence=float(args.min_confidence),
+                min_lift=float(args.min_lift),
+                max_itemset_size=int(args.max_itemset_size),
+                max_rules=int(args.max_rules),
+                max_itemsets=int(args.max_itemsets),
+            ),
+        )
+    except ValueError as error:
+        raise SystemExit(f"Cannot train association rules: {error}") from error
+
+    model = {
+        **result.model,
+        "training_input": str(input_path),
+        "note": "Trained on the training split only. Hold-out test data is not used.",
+    }
+    _write_json(model, output_path)
+    summary = model["summary"]
+    print(
+        json.dumps(
+            {
+                "input": str(input_path),
+                "output": str(output_path),
+                "model_type": model["model_type"],
+                "algorithm": model["algorithm"],
+                "basket_count": summary["basket_count"],
+                "item_count": summary["item_count"],
+                "frequent_itemset_count": summary["frequent_itemset_count"],
+                "rule_count": summary["rule_count"],
+                "exported_rule_count": summary["exported_rule_count"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def _validate_associations(args: argparse.Namespace) -> None:
+    folds_dir = Path(args.folds_dir)
+    output_path = Path(args.output)
+    folds = _read_association_validation_folds(folds_dir)
+    try:
+        result = validate_association_rules(
+            folds,
+            config=AssociationValidationConfig(
+                basket_field=str(args.basket_field),
+                item_field=str(args.item_field),
+                min_support=float(args.min_support),
+                min_confidence=float(args.min_confidence),
+                min_lift=float(args.min_lift),
+                max_itemset_size=int(args.max_itemset_size),
+                max_rules=int(args.max_rules),
+                max_itemsets=int(args.max_itemsets),
+                top_rules=int(args.top_rules),
+            ),
+        )
+    except ValueError as error:
+        raise SystemExit(f"Cannot validate association rules: {error}") from error
+
+    report = {
+        **result.report,
+        "folds_dir": str(folds_dir),
+        "output": str(output_path),
+    }
+    _write_json(report, output_path)
+    summary = report["summary"]
+    print(
+        json.dumps(
+            {
+                "folds_dir": str(folds_dir),
+                "output": str(output_path),
+                "fold_count": summary["fold_count"],
+                "mean_train_rule_count": summary["mean_train_rule_count"],
+                "mean_validation_confidence": summary["mean_validation_confidence"],
+                "mean_validation_lift": summary["mean_validation_lift"],
+                "mean_antecedent_coverage": summary["mean_antecedent_coverage"],
+                "mean_hit_rate_per_covered_basket": summary["mean_hit_rate_per_covered_basket"],
+                "mean_abs_confidence_gap": summary["mean_abs_confidence_gap"],
+                "mean_stable_rule_count": summary["mean_stable_rule_count"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def _test_associations(args: argparse.Namespace) -> None:
+    model_path = Path(args.model_input)
+    test_input_path = Path(args.test_input)
+    output_path = Path(args.output)
+    model = _read_json_object(model_path)
+    test_records = _read_records(test_input_path)
+    try:
+        result = test_association_rules(
+            model,
+            test_records,
+            config=AssociationTestConfig(
+                basket_field=str(args.basket_field),
+                item_field=str(args.item_field),
+                min_confidence=float(args.min_confidence),
+                min_lift=float(args.min_lift),
+                top_rules=int(args.top_rules),
+            ),
+        )
+    except ValueError as error:
+        raise SystemExit(f"Cannot test association rules: {error}") from error
+
+    report = {
+        **result.report,
+        "model_input": str(model_path),
+        "test_input": str(test_input_path),
+        "output": str(output_path),
+    }
+    _write_json(report, output_path)
+    test_summary = report["test"]
+    print(
+        json.dumps(
+            {
+                "model_input": str(model_path),
+                "test_input": str(test_input_path),
+                "output": str(output_path),
+                "record_count": test_summary["record_count"],
+                "basket_count": test_summary["basket_count"],
+                "evaluated_rule_count": test_summary["evaluated_rule_count"],
+                "stable_rule_count": test_summary["stable_rule_count"],
+                "mean_test_confidence": test_summary["mean_test_confidence"],
+                "mean_test_lift": test_summary["mean_test_lift"],
+                "antecedent_coverage": test_summary["antecedent_coverage"],
+                "hit_rate_per_covered_basket": test_summary["hit_rate_per_covered_basket"],
+                "mean_abs_confidence_gap": test_summary["mean_abs_confidence_gap"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def _read_association_validation_folds(folds_dir: Path) -> list[AssociationValidationFold]:
+    if not folds_dir.exists():
+        raise SystemExit(f"{folds_dir} does not exist. Run ai-test split-datasets first.")
+
+    folds: list[AssociationValidationFold] = []
+    for train_path in sorted(folds_dir.glob("fold_*_train.json")):
+        fold_name = train_path.name.removesuffix("_train.json")
+        validation_path = folds_dir / f"{fold_name}_validation.json"
+        if not validation_path.exists():
+            raise SystemExit(f"Missing validation file for {train_path}: {validation_path}")
+        folds.append(
+            AssociationValidationFold(
+                fold_index=_fold_index(fold_name),
+                train_records=_read_records(train_path),
+                validation_records=_read_records(validation_path),
+            )
+        )
+
+    if not folds:
+        raise SystemExit(f"No fold train files found in {folds_dir}.")
+    return folds
+
+
+def _fold_index(fold_name: str) -> int:
+    try:
+        return int(fold_name.removeprefix("fold_"))
+    except ValueError as error:
+        raise SystemExit(f"Cannot parse fold index from {fold_name}") from error
+
+
 def _read_records(input_path: Path) -> list[dict[str, object]]:
     payload = json.loads(input_path.read_text(encoding="utf-8"))
     if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
         raise SystemExit(f"{input_path} must contain a JSON array of objects.")
     return [dict(item) for item in payload]
+
+
+def _read_json_object(input_path: Path) -> dict[str, object]:
+    payload = json.loads(input_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise SystemExit(f"{input_path} must contain a JSON object.")
+    return dict(payload)
 
 
 def _write_json(payload: object, output_path: Path) -> None:

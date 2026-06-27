@@ -110,6 +110,20 @@ def config_int(config: Mapping[str, Any], key: str, default: int) -> int:
     return default
 
 
+def config_float(config: Mapping[str, Any], key: str, default: float) -> float:
+    value = config.get(key)
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return default
+    return default
+
+
 def config_bool(config: Mapping[str, Any], key: str, default: bool) -> bool:
     value = config.get(key)
     if isinstance(value, bool):

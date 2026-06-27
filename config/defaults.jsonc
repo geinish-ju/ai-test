@@ -152,5 +152,107 @@
     "exact_time_fields": [
       "order_created_at"
     ]
+  },
+
+  "data_splitting": {
+    // Preprocessed records produced by Data preprocessing.
+    "input": "data/processed/grocery_order_items.json",
+
+    // Local split artifacts. Ignored by git because they are derived data.
+    "output_dir": "data/splits",
+
+    // Keep whole baskets together to prevent leakage across train/validation/test.
+    "group_field": "basket_id",
+
+    // Used to keep the train/test and fold distributions reasonably balanced.
+    "stratify_field": "shop",
+
+    // Hold-out test share. The test dataset is not used for tuning.
+    "test_size": 0.2,
+
+    // Number of validation folds over the remaining train-validation baskets.
+    "n_splits": 5,
+
+    // Deterministic split seed for repeatable experiments.
+    "random_seed": 42
+  },
+
+  "model_training": {
+    "association_rules": {
+      // Training data only. The hold-out test dataset must remain untouched for final testing.
+      "input": "data/splits/train_validation.json",
+
+      // Local model artifact. Ignored by git because it is derived from local data.
+      "output": "data/models/association_rules.json",
+
+      // Basket id groups product lines into one market basket.
+      "basket_field": "basket_id",
+
+      // Default to product_group for stable first rules. Use product_name for exact products.
+      "item_field": "product_group",
+
+      // Minimum share of training baskets containing an itemset.
+      "min_support": 0.02,
+
+      // Minimum P(consequent | antecedent).
+      "min_confidence": 0.2,
+
+      // Rules with lift > 1 indicate positive association above independent co-occurrence.
+      "min_lift": 1.05,
+
+      // Keep the first model simple: pair rules such as bread -> milk.
+      "max_itemset_size": 2,
+
+      // Limit exported artifact size while keeping the strongest rules.
+      "max_rules": 100,
+      "max_itemsets": 500
+    }
+  },
+
+  "model_validation": {
+    "association_rules": {
+      // K-fold split files produced by ai-test split-datasets.
+      "folds_dir": "data/splits/folds",
+
+      // Validation report with fold metrics and aggregate train-vs-validation gaps.
+      "output": "data/validation/association_validation_report.json",
+
+      // Use the same fields and thresholds as association training unless overridden.
+      "basket_field": "basket_id",
+      "item_field": "product_group",
+      "min_support": 0.02,
+      "min_confidence": 0.2,
+      "min_lift": 1.05,
+      "max_itemset_size": 2,
+      "max_rules": 100,
+      "max_itemsets": 500,
+
+      // Number of strongest validation rules stored per fold.
+      "top_rules": 20
+    }
+  },
+
+  "model_testing": {
+    "association_rules": {
+      // Trained association model produced by ai-test train-associations.
+      "model_input": "data/models/association_rules.json",
+
+      // Final hold-out dataset produced by ai-test split-datasets. Do not use it for tuning.
+      "test_input": "data/splits/test.json",
+
+      // Final test report with hold-out metrics.
+      "output": "data/testing/association_test_report.json",
+
+      // Use the same basket and item fields as training and validation unless overridden.
+      "basket_field": "basket_id",
+      "item_field": "product_group",
+
+      // Thresholds used only to count rules that remain stable on the test dataset.
+      "min_confidence": 0.2,
+      "min_lift": 1.05,
+
+      // Number of strongest test rules stored in the report.
+      "top_rules": 20
+    }
   }
 }
