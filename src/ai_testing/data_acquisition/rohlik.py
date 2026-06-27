@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlencode
 
 from ai_testing.data_acquisition.common import (
     JsonApiClient,
@@ -74,27 +75,71 @@ class RohlikApiClient:
     cookies: Mapping[str, str] | str | None = None
     headers: Mapping[str, str] | None = None
     timeout_seconds: float = 30.0
+    delivered_orders_path: str = DELIVERED_ORDERS_PATH
+    order_detail_path_template: str = ORDER_DETAIL_PATH_TEMPLATE
+    product_card_path_template: str = PRODUCT_CARD_PATH_TEMPLATE
+    product_detail_path_template: str = PRODUCT_DETAIL_PATH_TEMPLATE
+    product_detail_content_path_template: str = PRODUCT_DETAIL_CONTENT_PATH_TEMPLATE
 
-    def get_delivered_orders(self) -> list[JsonObject]:
-        payload = self._client().get_json(DELIVERED_ORDERS_PATH)
+    def get_delivered_orders(
+        self,
+        page_limit: int = 10,
+        include_archived: bool = True,
+    ) -> list[JsonObject]:
+        if page_limit <= 0:
+            raise ValueError("Rohlik delivered orders page limit must be greater than zero")
+
+        orders: list[JsonObject] = []
+        offset = 0
+        while True:
+            page = self.get_delivered_orders_page(
+                offset=offset,
+                limit=page_limit,
+                include_archived=include_archived,
+            )
+            if not page:
+                break
+
+            orders.extend(page)
+            if len(page) < page_limit:
+                break
+
+            offset += len(page)
+
+        return orders
+
+    def get_delivered_orders_page(
+        self,
+        offset: int,
+        limit: int,
+        include_archived: bool,
+    ) -> list[JsonObject]:
+        query = urlencode(
+            {
+                "offset": offset,
+                "limit": limit,
+                "showArchived": str(include_archived).lower(),
+            }
+        )
+        payload = self._client().get_json(f"{self.delivered_orders_path}?{query}")
         if isinstance(payload, Mapping):
             return mapping_list_value(payload, "orders")
         return require_json_list(payload, "Rohlik delivered orders")
 
     def get_order_detail(self, order_id: str | int) -> JsonObject:
-        path = ORDER_DETAIL_PATH_TEMPLATE.format(order_id=order_id)
+        path = self.order_detail_path_template.format(order_id=order_id)
         return require_json_object(self._client().get_json(path), "Rohlik")
 
     def get_product_card(self, product_id: str | int) -> JsonObject:
-        path = PRODUCT_CARD_PATH_TEMPLATE.format(product_id=product_id)
+        path = self.product_card_path_template.format(product_id=product_id)
         return require_json_object(self._client().get_json(path), "Rohlik product card")
 
     def get_product_detail(self, product_id: str | int) -> JsonObject:
-        path = PRODUCT_DETAIL_PATH_TEMPLATE.format(product_id=product_id)
+        path = self.product_detail_path_template.format(product_id=product_id)
         return require_json_object(self._client().get_json(path), "Rohlik product detail")
 
     def get_product_detail_content(self, product_id: str | int) -> JsonObject:
-        path = PRODUCT_DETAIL_CONTENT_PATH_TEMPLATE.format(product_id=product_id)
+        path = self.product_detail_content_path_template.format(product_id=product_id)
         return require_json_object(self._client().get_json(path), "Rohlik product detail content")
 
     def _client(self) -> JsonApiClient:
@@ -113,9 +158,14 @@ class RohlikOrderHistoryAdapter:
     include_raw: bool = False
     enrich_products: bool = True
     include_product_content: bool = False
+    order_page_limit: int = 10
+    include_archived_orders: bool = True
 
     def fetch_order_item_records(self) -> list[Record]:
-        orders = self.client.get_delivered_orders()
+        orders = self.client.get_delivered_orders(
+            page_limit=self.order_page_limit,
+            include_archived=self.include_archived_orders,
+        )
         product_metadata_by_id: dict[int, RohlikProductMetadata] = {}
 
         def load_product_metadata(product_id: int) -> RohlikProductMetadata:

@@ -1,0 +1,156 @@
+// Default local runtime settings for the AI Grocery Testing Framework.
+//
+// This file is JSONC: it follows JSON syntax but allows comments. Do not put cookies, tokens,
+// exported orders, or other personal data here. CLI arguments override these defaults.
+{
+  "data_acquisition": {
+    // Sample data is synthetic and safe for quick local smoke checks.
+    "sample_output": "data/raw/sample_order_items.json",
+
+    // Combined Kosik + Rohlik raw output used as the default preprocessing input.
+    "combined_output": "data/raw/grocery_order_items.json",
+
+    // Keep raw API payload fragments in each normalized record. Useful for mapper debugging,
+    // but normally disabled to avoid larger personal data exports.
+    "include_raw": false,
+
+    // Fetch product metadata endpoints after order details to improve categories, descriptions,
+    // ingredients, and product-level attributes.
+    "product_enrichment": true,
+
+    "kosik": {
+      // Base shop URL. Override only if the shop domain or environment changes.
+      "base_url": "https://www.kosik.cz",
+
+      // Local ignored cookie file. The file should contain one browser Cookie header value.
+      "cookies_file": "secrets/kosik.cookies.txt",
+
+      // Optional environment variable fallback for the same Cookie header value.
+      "cookies_env": "KOSIK_COOKIES",
+
+      // Shop-specific raw output before combining shops.
+      "output": "data/raw/kosik_order_items.json",
+
+      // Number of order headers requested per page. Pagination continues until an empty page.
+      "order_page_limit": 150,
+
+      // Include archived historical orders in the dataset.
+      "include_archived_orders": true,
+
+      "endpoints": {
+        // Order header list. The client adds limit, showArchived, and offset query parameters.
+        "order_list_path": "/api/front/profile/order-list",
+
+        // Order detail endpoint. {order_id} is replaced with each order identifier from the list.
+        "order_detail_path_template": "/api/front/profile/order/{order_id}",
+
+        // Product metadata endpoint. {slug} is replaced with the product slug from an order item.
+        "product_by_slug_path_template": "/api/front/product/slug/{slug}"
+      }
+    },
+
+    "rohlik": {
+      // Base shop URL. Override only if the shop domain or environment changes.
+      "base_url": "https://www.rohlik.cz",
+
+      // Local ignored cookie file. The file should contain one browser Cookie header value.
+      "cookies_file": "secrets/rohlik.cookies.txt",
+
+      // Optional environment variable fallback for the same Cookie header value.
+      "cookies_env": "ROHLIK_COOKIES",
+
+      // Shop-specific raw output before combining shops.
+      "output": "data/raw/rohlik_order_items.json",
+
+      // Number of delivered-order headers requested per page. Pagination continues until empty.
+      "order_page_limit": 150,
+
+      // Include archived historical orders in the dataset.
+      "include_archived_orders": true,
+
+      // Fetch the heavier detail/content endpoint for descriptions and ingredients.
+      "include_product_content": true,
+
+      "endpoints": {
+        // Delivered order list. The client adds offset, limit, and showArchived query parameters.
+        "delivered_orders_path": "/api/v3/orders/delivered",
+
+        // Order detail endpoint. {order_id} is replaced with each delivered order identifier.
+        "order_detail_path_template": "/api/v3/orders/{order_id}",
+
+        // Lightweight product card endpoint used for category and product metadata.
+        "product_card_path_template": "/api/v1/products/{product_id}/card",
+
+        // Product detail endpoint used for richer metadata when available.
+        "product_detail_path_template": "/api/v1/products/{product_id}/detail",
+
+        // Product detail content endpoint used for descriptions, ingredients, and long text.
+        "product_detail_content_path_template": "/api/v1/products/{product_id}/detail/content"
+      }
+    }
+  },
+
+  "data_preprocessing": {
+    // Raw normalized records produced by data acquisition.
+    "input": "data/raw/grocery_order_items.json",
+
+    // Privacy-safer records after technical identifiers and selected exact timestamps are removed.
+    "output": "data/processed/grocery_order_items.json",
+
+    // Data quality diagnostics written next to the processed dataset.
+    "report_output": "data/processed/grocery_data_quality_report.json",
+
+    // Remove exact duplicate processed rows. Keep enabled when rebuilding a clean modeling dataset.
+    "drop_exact_duplicates": true,
+
+    // Prefix for synthetic basket identifiers generated after raw order ids are removed.
+    "basket_id_prefix": "basket",
+
+    // Final model-oriented feature whitelist. Any raw acquisition field not listed here is removed.
+    "output_fields": [
+      "shop",
+      "order_date",
+      "product_name",
+      "brand",
+      "main_category",
+      "category",
+      "is_gluten_free",
+      "product_group",
+      "meat_type",
+      "quality_level",
+      "quantity_ordered",
+      "unit",
+      "package_quantity",
+      "package_unit",
+      "price_unit",
+      "price_per_unit",
+      "price_per_unit_unit",
+      "currency",
+      "basket_id",
+      "order_month",
+      "order_week_of_year",
+      "order_day_of_week",
+      "order_is_weekend",
+      "order_quarter"
+    ],
+
+    // Technical identifiers removed before modeling to reduce leakage and personal traceability.
+    "identifier_fields": [
+      "order_id",
+      "order_number",
+      "order_item_id",
+      "product_id",
+      "product_slug",
+      "product_url",
+      "main_category_id",
+      "category_id",
+      "category_ids"
+    ],
+
+    // Exact timestamps removed after calendar features are derived. The final kept fields are
+    // controlled by output_fields above.
+    "exact_time_fields": [
+      "order_created_at"
+    ]
+  }
+}

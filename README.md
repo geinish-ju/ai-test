@@ -1,136 +1,164 @@
-# AI Test Grocery Data Acquisition
+# AI Grocery Testing Framework
 
-Minimal project for exporting personal grocery order history into normalized product-line records.
+Python project for preparing grocery order data for AI testing practice.
 
 Current scope:
 
-- Kosik data acquisition;
-- Rohlik data acquisition;
-- one shared normalized order-item schema;
-- product metadata enrichment for categories, category paths, descriptions, and ingredients;
-- local ignored cookie files for authorization;
-- sample data export for checking the workflow without real shop access;
-- no model training yet.
+- collect order-item data from Kosik and Rohlik;
+- normalize both shops into one raw dataset;
+- preprocess raw data into a compact modeling dataset;
+- generate a data quality report.
 
-## Install
+Model training and AI test scenarios will be added in the next project stage.
 
-```powershell
-python -m pip install -e ".[dev]"
+## Tech Stack
+
+Current stack:
+
+- Python 3.10+
+- Python standard library
+- `argparse` CLI exposed as `ai-test`
+- JSON / JSONC configuration
+- `ruff`, `mypy`, `pre-commit`
+- Git
+
+Planned ML stack:
+
+- `pandas` / `numpy` for dataset work
+- `scikit-learn` for supervised classification
+- `matplotlib` / `seaborn` for analysis charts
+- `joblib` for model persistence
+- `pytest` for pipeline checks
+
+## Project Structure
+
+```text
+config/
+  defaults.jsonc              # non-secret runtime defaults
+src/ai_testing/
+  cli.py                      # ai-test commands
+  config.py                   # JSONC config loader
+  data_acquisition/
+    common.py                 # shared HTTP/data helpers
+    kosik.py                  # Kosik adapter and mapping
+    rohlik.py                 # Rohlik adapter and mapping
+  data_preprocessing/
+    grocery.py                # feature selection and quality report
+  sample_data.py              # synthetic data for smoke checks
+data/                         # generated locally, ignored by git
+secrets/                      # local cookies, ignored by git
 ```
 
-## Local Secrets
+## Configuration
 
-Real browser cookies are read from ignored local files:
+Runtime defaults are in:
+
+```text
+config/defaults.jsonc
+```
+
+The config controls shop URLs, API paths, pagination limits, output paths, enrichment flags, and the
+preprocessing feature whitelist. CLI arguments override config values.
+
+## Secrets
+
+Create local cookie files:
 
 ```text
 secrets/kosik.cookies.txt
 secrets/rohlik.cookies.txt
 ```
 
-Each file should contain one authenticated browser `Cookie` header value:
+Each file should contain one authenticated browser `Cookie` header value. Do not commit secrets or
+exported datasets.
 
-```text
-cookie_a=value; cookie_b=value
+## Commands
+
+Install:
+
+```powershell
+python -m pip install -e ".[dev]"
 ```
 
-The whole `secrets/` directory is ignored by git.
-
-## Data Acquisition Sample
+Run synthetic sample export:
 
 ```powershell
 ai-test export-sample
 ```
 
-Default output:
+Run data acquisition:
 
-```text
-data/raw/sample_order_items.json
+```powershell
+ai-test export-all
 ```
 
-## Data Acquisition From Shops
+Run shops separately:
 
 ```powershell
 ai-test export-kosik
-ai-test export-rohlik --include-product-content
+ai-test export-rohlik
+```
+
+Run preprocessing:
+
+```powershell
+ai-test preprocess-data
+```
+
+Use a custom config:
+
+```powershell
+ai-test --config config/defaults.jsonc export-all
+```
+
+Useful acquisition options:
+
+```powershell
+ai-test export-all --kosik-order-page-limit 150 --rohlik-order-page-limit 150
+ai-test export-all --no-product-enrichment
 ai-test export-all --include-product-content
+ai-test export-all --no-kosik-include-archived-orders
+ai-test export-all --no-rohlik-include-archived-orders
 ```
 
-Default outputs:
-
-```text
-data/raw/kosik_order_items.json
-data/raw/rohlik_order_items.json
-data/raw/grocery_order_items.json
-```
-
-Product enrichment is enabled by default. Use `--skip-product-enrichment` only when you want a
-faster data acquisition run with fewer product metadata fields.
-
-## API Flow
-
-Kosik:
-
-1. `https://www.kosik.cz/api/front/profile/order-list`
-2. `https://www.kosik.cz/api/front/profile/order/<order_id>`
-3. `https://www.kosik.cz/api/front/product/slug/<slug>`
-
-Rohlik:
-
-1. `https://www.rohlik.cz/api/v3/orders/delivered`
-2. `https://www.rohlik.cz/api/v3/orders/<order_id>`
-3. `https://www.rohlik.cz/api/v1/products/<product_id>/card`
-4. `https://www.rohlik.cz/api/v1/products/<product_id>/detail`
-5. `https://www.rohlik.cz/api/v1/products/<product_id>/detail/content`
-
-## Normalized Record
-
-Each purchased product line becomes one record. Core fields:
-
-```json
-{
-  "shop": "kosik",
-  "order_id": "kosik-demo-2026-06-20",
-  "order_date": "2026-06-20",
-  "order_created_at": "2026-06-20T10:00:00+02:00",
-  "order_item_id": "kosik-line-1",
-  "product_id": "sample-product-1",
-  "product_slug": "sample-product-1",
-  "product_url": "/sample-product-1",
-  "product_name": "Example product",
-  "brand": null,
-  "main_category_id": "fruit-and-vegetables",
-  "main_category": "Fruit and vegetables",
-  "category_id": "fresh-fruit",
-  "category": "Fresh fruit",
-  "category_path": ["Fruit and vegetables", "Fresh fruit"],
-  "quantity": 1.0,
-  "quantity_ordered": 1.0,
-  "quantity_delivered": 1.0,
-  "unit": "pcs",
-  "price_total": 49.9,
-  "price_unit": 49.9,
-  "price_per_unit": 49.9,
-  "price_per_unit_unit": "kg",
-  "currency": "CZK",
-  "product_description": "Product description when the shop provides it.",
-  "ingredients_text": "Ingredients when the shop provides them.",
-  "product_enriched": true
-}
-```
-
-The explicit Data acquisition source maps live in:
-
-- `src/ai_testing/data_acquisition/kosik.py` as `KOSIK_FIELD_SOURCES`;
-- `src/ai_testing/data_acquisition/rohlik.py` as `ROHLIK_FIELD_SOURCES`.
-
-## Privacy
-
-`secrets/`, `data/raw/`, and `data/processed/` are ignored by git. Do not commit cookies or exported order history.
-
-## Quality Gate
+Run code checks:
 
 ```powershell
 ruff format --check .
 ruff check --no-cache .
-mypy
+mypy --no-incremental src
 ```
+
+## Data Acquisition
+
+Data acquisition reads authenticated order history from Kosik and Rohlik APIs. Each purchased product
+line is mapped into a shared raw order-item schema. Product enrichment can add category, description,
+ingredient, and package metadata when available.
+
+Raw data is written under `data/raw/`.
+
+## Data Preprocessing
+
+Data preprocessing converts raw order items into a compact dataset for future modeling.
+
+It keeps a feature whitelist from `config/defaults.jsonc`, removes technical identifiers and noisy
+raw fields, and derives calendar/category features:
+
+- `basket_id`
+- `order_month`
+- `order_week_of_year`
+- `order_day_of_week`
+- `order_is_weekend`
+- `order_quarter`
+- `is_gluten_free`
+- `product_group`
+- `meat_type`
+- `quality_level`
+
+`category_path`, product ids, order ids, URLs, `quantity`, `quantity_delivered`, `price_total`, and
+`product_enriched` are removed from the processed dataset.
+
+If `quantity_ordered` is missing, preprocessing fills it from delivered quantity, then from the raw
+generic quantity field.
+
+Processed data and the quality report are written under `data/processed/`.

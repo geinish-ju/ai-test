@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlencode
 
 from ai_testing.data_acquisition.common import (
     JsonApiClient,
@@ -59,19 +60,62 @@ class KosikApiClient:
     cookies: Mapping[str, str] | str | None = None
     headers: Mapping[str, str] | None = None
     timeout_seconds: float = 30.0
+    order_list_path: str = ORDER_LIST_PATH
+    order_detail_path_template: str = ORDER_DETAIL_PATH_TEMPLATE
+    product_by_slug_path_template: str = PRODUCT_BY_SLUG_PATH_TEMPLATE
 
-    def get_order_list(self) -> JsonObject:
+    def get_orders(
+        self,
+        page_limit: int = 50,
+        include_archived: bool = True,
+    ) -> list[JsonObject]:
+        if page_limit <= 0:
+            raise ValueError("Kosik order page limit must be greater than zero")
+
+        orders: list[JsonObject] = []
+        offset = 0
+        while True:
+            page_payload = self.get_order_list_page(
+                offset=offset,
+                limit=page_limit,
+                include_archived=include_archived,
+            )
+            page = mapping_list_value(page_payload, "orders")
+            if not page:
+                break
+
+            orders.extend(page)
+            if len(page) < page_limit:
+                break
+
+            offset += len(page)
+
+        return orders
+
+    def get_order_list_page(
+        self,
+        offset: int,
+        limit: int,
+        include_archived: bool,
+    ) -> JsonObject:
+        query = urlencode(
+            {
+                "limit": limit,
+                "showArchived": str(include_archived).lower(),
+                "offset": offset,
+            }
+        )
         client = self._client()
-        return require_json_object(client.get_json(ORDER_LIST_PATH), "Kosik")
+        return require_json_object(client.get_json(f"{self.order_list_path}?{query}"), "Kosik")
 
     def get_order_detail(self, order_id: str | int) -> JsonObject:
         client = self._client()
-        path = ORDER_DETAIL_PATH_TEMPLATE.format(order_id=order_id)
+        path = self.order_detail_path_template.format(order_id=order_id)
         return require_json_object(client.get_json(path), "Kosik")
 
     def get_product_by_slug(self, slug: str) -> JsonObject:
         client = self._client()
-        path = PRODUCT_BY_SLUG_PATH_TEMPLATE.format(slug=slug)
+        path = self.product_by_slug_path_template.format(slug=slug)
         return require_json_object(client.get_json(path), "Kosik")
 
     def _client(self) -> JsonApiClient:
@@ -89,9 +133,14 @@ class KosikOrderHistoryAdapter:
     client: KosikApiClient
     include_raw: bool = False
     enrich_products: bool = True
+    order_page_limit: int = 50
+    include_archived_orders: bool = True
 
     def fetch_order_item_records(self) -> list[Record]:
-        orders = mapping_list_value(self.client.get_order_list(), "orders")
+        orders = self.client.get_orders(
+            page_limit=self.order_page_limit,
+            include_archived=self.include_archived_orders,
+        )
         product_details_by_slug: dict[str, JsonObject | None] = {}
 
         def load_product_detail(product: JsonObject) -> JsonObject | None:
