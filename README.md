@@ -271,8 +271,8 @@ Artifacts are written to `data/classification/category/`, `data/models/category_
 `data/validation/category_classifier_validation_report.json`, and
 `data/testing/category_classifier_test_report.json`.
 
-Validation accuracy is used while evaluating and tuning the model. Test accuracy is the final
-hold-out result after the model and parameters are selected.
+Validation accuracy, precision, recall, and F1 are used while evaluating and tuning the model. Test
+metrics are the final hold-out result after the model and parameters are selected.
 
 ## Model Training
 
