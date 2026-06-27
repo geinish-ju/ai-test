@@ -52,6 +52,8 @@ def test_text_classifier(
             "testing_type": "hold-out test",
             "model_type": evaluation_report.get("model_type"),
             "algorithm": evaluation_report.get("algorithm"),
+            "framework": evaluation_report.get("framework"),
+            "artifact_format": evaluation_report.get("artifact_format"),
             "learning_type": evaluation_report.get("learning_type"),
             "model_training_input": evaluation_report.get("training_input"),
             "dataset": evaluation_report.get("dataset"),

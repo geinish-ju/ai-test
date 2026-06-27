@@ -6,8 +6,11 @@ from dataclasses import dataclass
 from statistics import mean, pstdev
 from typing import Any
 
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+
 from ai_testing.model_training import (
     TextClassifierConfig,
+    TextClassifierEstimator,
     predict_text_classifier,
     train_text_classifier,
 )
@@ -67,6 +70,7 @@ def validate_text_classifier(
         "validation_type": "k-fold cross-validation",
         "model_type": "text_classification",
         "algorithm": "multinomial_naive_bayes",
+        "framework": "scikit-learn",
         "learning_type": "supervised",
         "parameters": _validation_parameters(validation_config),
         "summary": _summary(fold_reports),
@@ -80,6 +84,7 @@ def evaluate_text_classifier(
     records: Sequence[Mapping[str, Any]],
     config: TextClassificationEvaluationConfig | None = None,
     dataset_name: str = "evaluation",
+    estimator: TextClassifierEstimator | None = None,
 ) -> TextClassificationEvaluationResult:
     evaluation_config = config or TextClassificationEvaluationConfig()
     _validate_evaluation_config(evaluation_config)
@@ -94,6 +99,7 @@ def evaluate_text_classifier(
         model,
         normalized_records,
         text_field=evaluation_config.text_field,
+        estimator=estimator,
     )
     paired = [
         (label, prediction)
@@ -107,6 +113,8 @@ def evaluate_text_classifier(
             "dataset": dataset_name,
             "model_type": model.get("model_type"),
             "algorithm": model.get("algorithm"),
+            "framework": model.get("framework"),
+            "artifact_format": model.get("artifact_format"),
             "learning_type": model.get("learning_type"),
             "training_input": model.get("training_input"),
             "record_count": len(normalized_records),
@@ -160,6 +168,7 @@ def _validate_fold(
             top_confusions=config.top_confusions,
         ),
         dataset_name=f"fold_{fold.fold_index:02d}_validation",
+        estimator=training_result.estimator,
     )
     return {
         "fold_index": fold.fold_index,
@@ -179,42 +188,63 @@ def _classification_metrics(
     top_confusions: int,
 ) -> Record:
     labels = sorted({label for label, _ in pairs} | {prediction for _, prediction in pairs})
-    total = len(pairs)
-    correct = sum(1 for label, prediction in pairs if label == prediction)
+    y_true = [label for label, _ in pairs]
+    y_pred = [prediction for _, prediction in pairs]
+    precision_values, recall_values, f1_values, support_values = precision_recall_fscore_support(
+        y_true,
+        y_pred,
+        labels=labels,
+        zero_division=0,
+    )
     per_class = {
-        label: _class_metrics(label=label, pairs=pairs)
-        for label in labels
-        if _class_support(label, pairs) > 0
+        label: {
+            "precision": _round(float(precision)),
+            "recall": _round(float(recall)),
+            "f1": _round(float(f1)),
+            "support": int(support),
+        }
+        for label, precision, recall, f1, support in zip(
+            labels,
+            precision_values,
+            recall_values,
+            f1_values,
+            support_values,
+            strict=True,
+        )
+        if int(support) > 0
     }
     return {
-        "evaluated_record_count": total,
+        "evaluated_record_count": len(pairs),
         "class_count": len(per_class),
-        "accuracy": _rate(correct, total),
-        "macro_precision": _mean(metric["precision"] for metric in per_class.values()),
-        "macro_recall": _mean(metric["recall"] for metric in per_class.values()),
-        "macro_f1": _mean(metric["f1"] for metric in per_class.values()),
-        "weighted_precision": _weighted_metric(per_class, "precision"),
-        "weighted_recall": _weighted_metric(per_class, "recall"),
-        "weighted_f1": _weighted_f1(per_class),
+        "accuracy": _round(float(accuracy_score(y_true, y_pred))) if pairs else 0.0,
+        "macro_precision": _average_metric(y_true, y_pred, labels, "macro", 0),
+        "macro_recall": _average_metric(y_true, y_pred, labels, "macro", 1),
+        "macro_f1": _average_metric(y_true, y_pred, labels, "macro", 2),
+        "weighted_precision": _average_metric(y_true, y_pred, labels, "weighted", 0),
+        "weighted_recall": _average_metric(y_true, y_pred, labels, "weighted", 1),
+        "weighted_f1": _average_metric(y_true, y_pred, labels, "weighted", 2),
         "per_class": per_class,
         "top_confusions": _top_confusions(pairs, top_confusions),
     }
 
 
-def _class_metrics(label: str, pairs: Sequence[tuple[str, str]]) -> Record:
-    true_positive = sum(1 for actual, predicted in pairs if actual == label and predicted == label)
-    false_positive = sum(1 for actual, predicted in pairs if actual != label and predicted == label)
-    false_negative = sum(1 for actual, predicted in pairs if actual == label and predicted != label)
-    support = _class_support(label, pairs)
-    precision = _rate(true_positive, true_positive + false_positive)
-    recall = _rate(true_positive, true_positive + false_negative)
-    f1 = _f1(precision, recall)
-    return {
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "support": support,
-    }
+def _average_metric(
+    y_true: Sequence[str],
+    y_pred: Sequence[str],
+    labels: Sequence[str],
+    average: str,
+    metric_index: int,
+) -> float:
+    if not y_true:
+        return 0.0
+    metrics = precision_recall_fscore_support(
+        y_true,
+        y_pred,
+        labels=labels,
+        average=average,
+        zero_division=0,
+    )
+    return _round(float(metrics[metric_index]))
 
 
 def _top_confusions(pairs: Sequence[tuple[str, str]], limit: int) -> list[Record]:
@@ -266,10 +296,6 @@ def _validation_parameters(config: TextClassificationValidationConfig) -> Record
 def _training_summary(model: Mapping[str, Any]) -> Record:
     summary = model.get("summary")
     return dict(summary) if isinstance(summary, Mapping) else {}
-
-
-def _class_support(label: str, pairs: Sequence[tuple[str, str]]) -> int:
-    return sum(1 for actual, _ in pairs if actual == label)
 
 
 def _weighted_f1(per_class: Mapping[str, Mapping[str, Any]]) -> float | None:
@@ -337,18 +363,6 @@ def _mean(values: Iterable[float]) -> float | None:
     if not numeric_values:
         return None
     return _round(mean(numeric_values))
-
-
-def _rate(count: int, total: int) -> float:
-    if total == 0:
-        return 0.0
-    return _round(count / total)
-
-
-def _f1(precision: float, recall: float) -> float:
-    if precision + recall == 0:
-        return 0.0
-    return _round(2 * precision * recall / (precision + recall))
 
 
 def _round(value: float) -> float:

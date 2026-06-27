@@ -217,6 +217,15 @@ def extract_number(value: Any) -> float | None:
     return None
 
 
+def ordered_quantity_or_delivered(
+    ordered_quantity: float | None,
+    delivered_quantity: float | None,
+) -> float | None:
+    if ordered_quantity == 0.0 and delivered_quantity is not None:
+        return delivered_quantity
+    return ordered_quantity
+
+
 def extract_currency(value: Any) -> str | None:
     mapping = as_mapping(value)
     if mapping is None:

@@ -21,6 +21,7 @@ from ai_testing.config import (
     default_config_path,
     load_config,
 )
+from ai_testing.core import artifact_metadata
 from ai_testing.data_acquisition import (
     KosikApiClient,
     KosikOrderHistoryAdapter,
@@ -38,7 +39,9 @@ from ai_testing.data_splitting import DatasetSplitConfig, split_dataset_records
 from ai_testing.input_data_testing import InputDataFold, InputDataTestConfig, test_input_data
 from ai_testing.ml_model_testing import (
     AssociationMLModelTestConfig,
+    TextClassifierMLModelTestConfig,
     test_association_ml_model,
+    test_text_classifier_ml_model,
 )
 from ai_testing.model_testing import (
     AssociationTestConfig,
@@ -49,6 +52,7 @@ from ai_testing.model_testing import (
 from ai_testing.model_training import (
     AssociationRulesConfig,
     TextClassifierConfig,
+    save_text_classifier_artifact,
     train_association_rules,
     train_text_classifier,
 )
@@ -60,6 +64,7 @@ from ai_testing.model_validation import (
     validate_association_rules,
     validate_text_classifier,
 )
+from ai_testing.project_quality import aggregate_quality_reports
 from ai_testing.sample_data import sample_grocery_order_item_records
 
 
@@ -103,6 +108,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         ml_model_testing_config,
         "association_rules",
     )
+    category_classifier_ml_model_testing_config = config_section(
+        ml_model_testing_config,
+        "category_classifier",
+    )
+    project_quality_config = config_section(app_config, "project_quality")
     default_include_raw = config_bool(acquisition_config, "include_raw", False)
     default_product_enrichment = config_bool(acquisition_config, "product_enrichment", True)
     kosik_product_enrichment = config_bool(
@@ -523,6 +533,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "data/models/category_classifier.json",
         ),
         help="Path to write category classifier model JSON",
+    )
+    category_classifier_parser.add_argument(
+        "--estimator-output",
+        default=config_str(
+            category_classifier_config,
+            "estimator_output",
+            "data/models/category_classifier.joblib",
+        ),
+        help="Path to write category classifier scikit-learn joblib artifact",
     )
     category_classifier_parser.add_argument(
         "--text-field",
@@ -1029,6 +1048,174 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
 
+    category_ml_model_test_parser = subparsers.add_parser(
+        "test-category-ml-model",
+        help="Test the supervised category classifier against acceptance criteria",
+    )
+    category_ml_model_test_parser.add_argument(
+        "--model-input",
+        default=config_str(
+            category_classifier_ml_model_testing_config,
+            "model_input",
+            "data/models/category_classifier.json",
+        ),
+        help="Path to trained category classifier model JSON",
+    )
+    category_ml_model_test_parser.add_argument(
+        "--validation-report-input",
+        default=config_str(
+            category_classifier_ml_model_testing_config,
+            "validation_report_input",
+            "data/validation/category_classifier_validation_report.json",
+        ),
+        help="Path to k-fold category classifier validation report JSON",
+    )
+    category_ml_model_test_parser.add_argument(
+        "--test-report-input",
+        default=config_str(
+            category_classifier_ml_model_testing_config,
+            "test_report_input",
+            "data/testing/category_classifier_test_report.json",
+        ),
+        help="Path to final category classifier hold-out test report JSON",
+    )
+    category_ml_model_test_parser.add_argument(
+        "--classification-manifest-input",
+        default=config_str(
+            category_classifier_ml_model_testing_config,
+            "classification_manifest_input",
+            "data/classification/category/classification_manifest.json",
+        ),
+        help="Path to classification preprocessing manifest JSON",
+    )
+    category_ml_model_test_parser.add_argument(
+        "--test-dataset-input",
+        default=config_str(
+            category_classifier_ml_model_testing_config,
+            "test_dataset_input",
+            "data/classification/category/test.json",
+        ),
+        help="Path used to ensure the classifier was not trained on the hold-out test dataset",
+    )
+    category_ml_model_test_parser.add_argument(
+        "--output",
+        default=config_str(
+            category_classifier_ml_model_testing_config,
+            "output",
+            "data/testing/category_ml_model_test_report.json",
+        ),
+        help="Path to write category classifier ML model test report JSON",
+    )
+    category_ml_model_test_parser.add_argument(
+        "--min-test-accuracy",
+        type=float,
+        default=config_float(category_classifier_ml_model_testing_config, "min_test_accuracy", 0.9),
+    )
+    category_ml_model_test_parser.add_argument(
+        "--min-test-macro-precision",
+        type=float,
+        default=config_float(
+            category_classifier_ml_model_testing_config,
+            "min_test_macro_precision",
+            0.7,
+        ),
+    )
+    category_ml_model_test_parser.add_argument(
+        "--min-test-macro-recall",
+        type=float,
+        default=config_float(
+            category_classifier_ml_model_testing_config,
+            "min_test_macro_recall",
+            0.7,
+        ),
+    )
+    category_ml_model_test_parser.add_argument(
+        "--min-test-macro-f1",
+        type=float,
+        default=config_float(category_classifier_ml_model_testing_config, "min_test_macro_f1", 0.7),
+    )
+    category_ml_model_test_parser.add_argument(
+        "--min-test-weighted-f1",
+        type=float,
+        default=config_float(
+            category_classifier_ml_model_testing_config,
+            "min_test_weighted_f1",
+            0.9,
+        ),
+    )
+    category_ml_model_test_parser.add_argument(
+        "--max-validation-test-accuracy-delta",
+        type=float,
+        default=config_float(
+            category_classifier_ml_model_testing_config,
+            "max_validation_test_accuracy_delta",
+            0.05,
+        ),
+    )
+    category_ml_model_test_parser.add_argument(
+        "--max-validation-test-macro-f1-delta",
+        type=float,
+        default=config_float(
+            category_classifier_ml_model_testing_config,
+            "max_validation_test_macro_f1_delta",
+            0.08,
+        ),
+    )
+    category_ml_model_test_parser.set_defaults(
+        forbidden_feature_fields=config_str_tuple(
+            category_classifier_ml_model_testing_config,
+            "forbidden_feature_fields",
+            (
+                *DEFAULT_IDENTIFIER_FIELDS,
+                "main_category",
+                "category",
+                "category_path",
+                "product_group",
+            ),
+        ),
+    )
+
+    project_quality_parser = subparsers.add_parser(
+        "run-quality-gates",
+        help="Aggregate input data and ML model quality reports into one project verdict",
+    )
+    project_quality_parser.add_argument(
+        "--input-data-report",
+        default=config_str(
+            project_quality_config,
+            "input_data_report",
+            "data/testing/input_data_test_report.json",
+        ),
+        help="Path to input data quality report JSON",
+    )
+    project_quality_parser.add_argument(
+        "--association-model-report",
+        default=config_str(
+            project_quality_config,
+            "association_model_report",
+            "data/testing/ml_model_test_report.json",
+        ),
+        help="Path to association ML model quality report JSON",
+    )
+    project_quality_parser.add_argument(
+        "--category-model-report",
+        default=config_str(
+            project_quality_config,
+            "category_model_report",
+            "data/testing/category_ml_model_test_report.json",
+        ),
+        help="Path to category classifier ML model quality report JSON",
+    )
+    project_quality_parser.add_argument(
+        "--output",
+        default=config_str(
+            project_quality_config,
+            "output",
+            "data/testing/project_quality_report.json",
+        ),
+        help="Path to write project quality report JSON",
+    )
+
     args = parser.parse_args(parser_argv)
     if args.command == "export-kosik":
         records = _fetch_kosik(args)
@@ -1127,6 +1314,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "test-ml-model":
         _test_ml_model(args)
+        return 0
+
+    if args.command == "test-category-ml-model":
+        _test_category_ml_model(args)
+        return 0
+
+    if args.command == "run-quality-gates":
+        _run_quality_gates(args)
         return 0
 
     return 2
@@ -1592,6 +1787,7 @@ def _build_classification_dataset(args: argparse.Namespace) -> None:
 def _train_category_classifier(args: argparse.Namespace) -> None:
     input_path = Path(args.input)
     output_path = Path(args.output)
+    estimator_output_path = Path(args.estimator_output)
     records = _read_records(input_path)
     try:
         result = train_text_classifier(
@@ -1610,17 +1806,28 @@ def _train_category_classifier(args: argparse.Namespace) -> None:
     model = {
         **result.model,
         "training_input": str(input_path),
+        "estimator_path": str(estimator_output_path),
         "note": "Trained on the supervised training split only. Hold-out test data is not used.",
     }
-    _write_json(model, output_path)
+    try:
+        save_text_classifier_artifact(
+            model=model,
+            estimator=result.estimator,
+            manifest_path=output_path,
+            estimator_path=estimator_output_path,
+        )
+    except ValueError as error:
+        raise SystemExit(f"Cannot save category classifier: {error}") from error
     summary = model["summary"]
     print(
         json.dumps(
             {
                 "input": str(input_path),
                 "output": str(output_path),
+                "estimator_output": str(estimator_output_path),
                 "model_type": model["model_type"],
                 "algorithm": model["algorithm"],
+                "framework": model["framework"],
                 "training_example_count": summary["training_example_count"],
                 "class_count": summary["class_count"],
                 "vocabulary_size": summary["vocabulary_size"],
@@ -1908,23 +2115,20 @@ def _test_input_data(args: argparse.Namespace) -> None:
             "test": str(test_input_path),
             "folds_dir": str(folds_dir),
         },
+        "artifacts": {
+            "processed": artifact_metadata(processed_input_path, "dataset", "processed_input"),
+            "train_validation": artifact_metadata(
+                train_validation_input_path,
+                "dataset",
+                "train_validation_input",
+            ),
+            "test": artifact_metadata(test_input_path, "dataset", "test_input"),
+            "folds_dir": artifact_metadata(folds_dir, "dataset_directory", "folds_input"),
+        },
         "output": str(output_path),
     }
     _write_json(report, output_path)
-    summary = report["summary"]
-    print(
-        json.dumps(
-            {
-                "output": str(output_path),
-                "status": report["status"],
-                "check_count": summary["check_count"],
-                "passed_count": summary["passed_count"],
-                "failed_count": summary["failed_count"],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-    )
+    _print_report_summary(report, output_path)
     _exit_if_report_failed(report)
 
 
@@ -1932,6 +2136,7 @@ def _test_ml_model(args: argparse.Namespace) -> None:
     model_path = Path(args.model_input)
     validation_report_path = Path(args.validation_report_input)
     test_report_path = Path(args.test_report_input)
+    test_dataset_path = Path(args.test_dataset_input)
     output_path = Path(args.output)
     result = test_association_ml_model(
         model=_read_json_object(model_path),
@@ -1953,24 +2158,131 @@ def _test_ml_model(args: argparse.Namespace) -> None:
             "model": str(model_path),
             "validation_report": str(validation_report_path),
             "test_report": str(test_report_path),
-            "test_dataset": str(args.test_dataset_input),
+            "test_dataset": str(test_dataset_path),
+        },
+        "artifacts": {
+            "model": artifact_metadata(model_path, "model", "model_input"),
+            "validation_report": artifact_metadata(
+                validation_report_path,
+                "report",
+                "validation_report_input",
+            ),
+            "test_report": artifact_metadata(test_report_path, "report", "test_report_input"),
+            "test_dataset": artifact_metadata(test_dataset_path, "dataset", "test_dataset_input"),
         },
         "output": str(output_path),
     }
     _write_json(report, output_path)
-    summary = report["summary"]
-    print(
-        json.dumps(
-            {
-                "output": str(output_path),
-                "status": report["status"],
-                "check_count": summary["check_count"],
-                "passed_count": summary["passed_count"],
-                "failed_count": summary["failed_count"],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+    _print_report_summary(report, output_path)
+    _exit_if_report_failed(report)
+
+
+def _test_category_ml_model(args: argparse.Namespace) -> None:
+    model_path = Path(args.model_input)
+    validation_report_path = Path(args.validation_report_input)
+    test_report_path = Path(args.test_report_input)
+    classification_manifest_path = Path(args.classification_manifest_input)
+    test_dataset_path = Path(args.test_dataset_input)
+    output_path = Path(args.output)
+    model = _read_json_object(model_path)
+    estimator_path = Path(str(model.get("estimator_path", "")))
+    result = test_text_classifier_ml_model(
+        model=model,
+        validation_report=_read_json_object(validation_report_path),
+        test_report=_read_json_object(test_report_path),
+        classification_manifest=_read_json_object(classification_manifest_path),
+        config=TextClassifierMLModelTestConfig(
+            test_dataset_input=str(args.test_dataset_input),
+            forbidden_feature_fields=tuple(args.forbidden_feature_fields),
+            min_test_accuracy=float(args.min_test_accuracy),
+            min_test_macro_precision=float(args.min_test_macro_precision),
+            min_test_macro_recall=float(args.min_test_macro_recall),
+            min_test_macro_f1=float(args.min_test_macro_f1),
+            min_test_weighted_f1=float(args.min_test_weighted_f1),
+            max_validation_test_accuracy_delta=float(args.max_validation_test_accuracy_delta),
+            max_validation_test_macro_f1_delta=float(args.max_validation_test_macro_f1_delta),
+        ),
+    )
+    report = {
+        **result.report,
+        "inputs": {
+            "model": str(model_path),
+            "estimator": str(estimator_path),
+            "validation_report": str(validation_report_path),
+            "test_report": str(test_report_path),
+            "classification_manifest": str(classification_manifest_path),
+            "test_dataset": str(test_dataset_path),
+        },
+        "artifacts": {
+            "model": artifact_metadata(model_path, "model", "model_input"),
+            "estimator": artifact_metadata(estimator_path, "model", "estimator_input"),
+            "validation_report": artifact_metadata(
+                validation_report_path,
+                "report",
+                "validation_report_input",
+            ),
+            "test_report": artifact_metadata(test_report_path, "report", "test_report_input"),
+            "classification_manifest": artifact_metadata(
+                classification_manifest_path,
+                "manifest",
+                "classification_manifest_input",
+            ),
+            "test_dataset": artifact_metadata(test_dataset_path, "dataset", "test_dataset_input"),
+        },
+        "output": str(output_path),
+    }
+    _write_json(report, output_path)
+    _print_report_summary(report, output_path)
+    _exit_if_report_failed(report)
+
+
+def _run_quality_gates(args: argparse.Namespace) -> None:
+    input_data_report_path = Path(args.input_data_report)
+    association_model_report_path = Path(args.association_model_report)
+    category_model_report_path = Path(args.category_model_report)
+    output_path = Path(args.output)
+    result = aggregate_quality_reports(
+        {
+            "input_data": _read_json_object(input_data_report_path),
+            "association_model": _read_json_object(association_model_report_path),
+            "category_model": _read_json_object(category_model_report_path),
+        }
+    )
+    report = {
+        **result.report,
+        "inputs": {
+            "input_data_report": str(input_data_report_path),
+            "association_model_report": str(association_model_report_path),
+            "category_model_report": str(category_model_report_path),
+        },
+        "artifacts": {
+            "input_data_report": artifact_metadata(
+                input_data_report_path,
+                "report",
+                "input_data_report",
+            ),
+            "association_model_report": artifact_metadata(
+                association_model_report_path,
+                "report",
+                "association_model_report",
+            ),
+            "category_model_report": artifact_metadata(
+                category_model_report_path,
+                "report",
+                "category_model_report",
+            ),
+        },
+        "output": str(output_path),
+    }
+    _write_json(report, output_path)
+    metrics = _mapping(report.get("metrics"))
+    _print_report_summary(
+        report,
+        output_path,
+        extra={
+            "failed_report_count": metrics.get("failed_report_count"),
+            "total_child_failed_check_count": metrics.get("total_child_failed_check_count"),
+        },
     )
     _exit_if_report_failed(report)
 
@@ -2070,6 +2382,96 @@ def _read_json_object(input_path: Path) -> dict[str, object]:
 def _write_json(payload: object, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _print_report_summary(
+    report: Mapping[str, object],
+    output_path: Path,
+    extra: Mapping[str, object] | None = None,
+) -> None:
+    summary = _mapping(report.get("summary"))
+    payload: dict[str, object] = {
+        "output": str(output_path),
+        "status": report.get("status"),
+        "check_count": summary.get("check_count"),
+        "passed_count": summary.get("passed_count"),
+        "failed_count": summary.get("failed_count"),
+    }
+    if extra:
+        payload.update(dict(extra))
+    failed_checks = _failed_checks_for_cli(report)
+    if failed_checks:
+        payload["failed_checks"] = failed_checks
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _failed_checks_for_cli(report: Mapping[str, object]) -> list[dict[str, object]]:
+    checks = report.get("checks")
+    if not isinstance(checks, Sequence) or isinstance(checks, (str, bytes)):
+        return []
+
+    failed_checks: list[dict[str, object]] = []
+    for check in checks:
+        if not isinstance(check, Mapping) or check.get("status") != "failed":
+            continue
+        failed_checks.append(
+            {
+                "id": check.get("id"),
+                "severity": check.get("severity"),
+                "message": check.get("message"),
+                "observed": check.get("observed"),
+                "expected": check.get("expected"),
+                "diagnostics": _diagnostics_for_cli(check.get("diagnostics")),
+            }
+        )
+    return failed_checks
+
+
+def _diagnostics_for_cli(value: object) -> object:
+    if not isinstance(value, Mapping):
+        return None
+
+    diagnostics: dict[str, object] = {}
+    for key in (
+        "summary",
+        "failure_columns",
+        "contract",
+        "suggested_actions",
+        "failed_child_checks",
+    ):
+        if key in value:
+            diagnostics[key] = value[key]
+
+    fields = value.get("fields")
+    if isinstance(fields, Mapping):
+        diagnostics["fields"] = {
+            str(field): _diagnostic_field_for_cli(field_diagnostics)
+            for field, field_diagnostics in fields.items()
+        }
+
+    sample_records = value.get("sample_records")
+    if isinstance(sample_records, Sequence) and not isinstance(sample_records, (str, bytes)):
+        diagnostics["sample_records"] = [item for item in sample_records[:3]]
+
+    return diagnostics or dict(value)
+
+
+def _diagnostic_field_for_cli(value: object) -> object:
+    if not isinstance(value, Mapping):
+        return value
+
+    field_summary: dict[str, object] = {}
+    for key in ("rule", "affected_record_count", "value_summary", "breakdown"):
+        if key in value:
+            field_summary[key] = value[key]
+    sample_records = value.get("sample_records")
+    if isinstance(sample_records, Sequence) and not isinstance(sample_records, (str, bytes)):
+        field_summary["sample_records"] = [item for item in sample_records[:3]]
+    return field_summary
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _exit_if_report_failed(report: Mapping[str, object]) -> None:

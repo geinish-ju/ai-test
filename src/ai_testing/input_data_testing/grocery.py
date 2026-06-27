@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import importlib
 import json
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
+
+from ai_testing.core import add_check as _add_check
+from ai_testing.core import build_standard_report
 
 Record = dict[str, Any]
 
@@ -63,6 +67,8 @@ def test_input_data(
     duplicate_rate = _rate(duplicate_count, len(normalized_processed))
     critical_missing_rates = _missing_rates(normalized_processed, config.critical_fields)
     coverage_missing_rates = _missing_rates(normalized_processed, config.coverage_fields)
+    invalid_numeric_counts = _invalid_numeric_counts(normalized_processed, config)
+    invalid_numeric_diagnostics = _invalid_numeric_diagnostics(normalized_processed, config)
 
     _add_check(
         checks,
@@ -148,11 +154,27 @@ def test_input_data(
     _add_check(
         checks,
         check_id="input_data.numeric_values",
-        passed=not _invalid_numeric_counts(normalized_processed, config),
+        passed=not invalid_numeric_counts,
         severity="major",
         message="Configured numeric fields have valid positive or non-negative values.",
-        observed=_invalid_numeric_counts(normalized_processed, config),
+        observed=invalid_numeric_counts,
         expected={"invalid_count": 0},
+        diagnostics=invalid_numeric_diagnostics,
+    )
+    pandera_contract_violations = _pandera_contract_violations(normalized_processed, config)
+    _add_check(
+        checks,
+        check_id="input_data.pandera_contract",
+        passed=not pandera_contract_violations,
+        severity="major",
+        message="Processed dataset satisfies the dataframe schema contract.",
+        observed=pandera_contract_violations,
+        expected={"failure_case_count": 0},
+        diagnostics=_pandera_contract_diagnostics(
+            records=normalized_processed,
+            violations=pandera_contract_violations,
+            config=config,
+        ),
     )
     _add_check(
         checks,
@@ -239,26 +261,28 @@ def test_input_data(
     )
 
     return InputDataTestResult(
-        report={
-            "step": "Input data testing",
-            "testing_type": "input data quality and split integrity",
-            "status": _overall_status(checks),
-            "summary": _summary(checks),
-            "datasets": {
-                "processed": _dataset_summary(normalized_processed, config.group_field),
-                "train_validation": _dataset_summary(
-                    normalized_train_validation,
-                    config.group_field,
-                ),
-                "test": _dataset_summary(normalized_test, config.group_field),
-                "fold_count": len(folds),
+        report=build_standard_report(
+            report_type="input_data_test",
+            subject="grocery_order_items",
+            step="Input data testing",
+            testing_type="input data quality and split integrity",
+            checks=checks,
+            details={
+                "datasets": {
+                    "processed": _dataset_summary(normalized_processed, config.group_field),
+                    "train_validation": _dataset_summary(
+                        normalized_train_validation,
+                        config.group_field,
+                    ),
+                    "test": _dataset_summary(normalized_test, config.group_field),
+                    "fold_count": len(folds),
+                },
+                "missing_values": {
+                    "critical_fields": critical_missing_rates,
+                    "coverage_fields": coverage_missing_rates,
+                },
             },
-            "missing_values": {
-                "critical_fields": critical_missing_rates,
-                "coverage_fields": coverage_missing_rates,
-            },
-            "checks": checks,
-        }
+        )
     )
 
 
@@ -350,27 +374,6 @@ def _add_fold_checks(
     )
 
 
-def _add_check(
-    checks: list[Record],
-    check_id: str,
-    passed: bool,
-    severity: str,
-    message: str,
-    observed: Any,
-    expected: Any,
-) -> None:
-    checks.append(
-        {
-            "id": check_id,
-            "status": "passed" if passed else "failed",
-            "severity": severity,
-            "message": message,
-            "observed": observed,
-            "expected": expected,
-        }
-    )
-
-
 def _missing_required_field_counts(
     records: Sequence[Mapping[str, Any]],
     fields: Sequence[str],
@@ -421,6 +424,227 @@ def _invalid_numeric_counts(
         if count:
             invalid[field] = count
     return dict(sorted(invalid.items()))
+
+
+def _invalid_numeric_diagnostics(
+    records: Sequence[Mapping[str, Any]],
+    config: InputDataTestConfig,
+) -> Record:
+    field_rules = {
+        **{field: "> 0" for field in config.positive_numeric_fields},
+        **{field: ">= 0" for field in config.non_negative_numeric_fields},
+    }
+    field_diagnostics = {
+        field: _invalid_numeric_field_diagnostics(records, field, rule)
+        for field, rule in sorted(field_rules.items())
+    }
+    field_diagnostics = {
+        field: diagnostics
+        for field, diagnostics in field_diagnostics.items()
+        if diagnostics["affected_record_count"] > 0
+    }
+    if not field_diagnostics:
+        return {}
+
+    return {
+        "summary": (
+            "One or more numeric fields violate the modeling contract. "
+            "Rows with non-positive quantity usually mean cancelled, unavailable, "
+            "or incorrectly mapped order items."
+        ),
+        "fields": field_diagnostics,
+        "suggested_actions": [
+            "Check whether affected rows represent cancelled or undelivered items.",
+            "If they are not real purchases, filter them out during preprocessing.",
+            "If they are real purchases, fix the acquisition/preprocessing quantity mapping.",
+        ],
+    }
+
+
+def _invalid_numeric_field_diagnostics(
+    records: Sequence[Mapping[str, Any]],
+    field: str,
+    rule: str,
+) -> Record:
+    invalid_records = [
+        (index, record)
+        for index, record in enumerate(records)
+        if _invalid_numeric_value(record.get(field), rule)
+    ]
+    values = [_float_value(record.get(field)) for _, record in invalid_records]
+    numeric_values = [value for value in values if value is not None]
+    return {
+        "rule": rule,
+        "affected_record_count": len(invalid_records),
+        "value_summary": _numeric_failure_summary(numeric_values),
+        "breakdown": {
+            "by_shop": _top_value_counts(record.get("shop") for _, record in invalid_records),
+            "by_main_category": _top_value_counts(
+                record.get("main_category") for _, record in invalid_records
+            ),
+            "by_unit": _top_value_counts(record.get("unit") for _, record in invalid_records),
+        },
+        "sample_records": [
+            _diagnostic_record(index=index, record=record, fields=(field,))
+            for index, record in invalid_records[:10]
+        ],
+    }
+
+
+def _invalid_numeric_value(value: Any, rule: str) -> bool:
+    if _is_missing(value):
+        return False
+    if rule == "> 0":
+        return not _number_gt(value, 0.0)
+    if rule == ">= 0":
+        return not _number_gte(value, 0.0)
+    return False
+
+
+def _numeric_failure_summary(values: Sequence[float]) -> Record:
+    if not values:
+        return {"min": None, "max": None, "zero_count": 0, "negative_count": 0}
+    return {
+        "min": min(values),
+        "max": max(values),
+        "zero_count": sum(1 for value in values if value == 0),
+        "negative_count": sum(1 for value in values if value < 0),
+    }
+
+
+def _pandera_contract_violations(
+    records: Sequence[Mapping[str, Any]],
+    config: InputDataTestConfig,
+) -> Record:
+    if not records:
+        return {}
+
+    pd = importlib.import_module("pandas")
+    pa = importlib.import_module("pandera.pandas")
+    columns: dict[str, Any] = {
+        field: pa.Column(nullable=field not in set(config.critical_fields), required=True)
+        for field in config.required_fields
+    }
+    columns[config.stratify_field] = pa.Column(
+        str,
+        pa.Check.isin(config.expected_shops),
+        nullable=False,
+        required=True,
+        coerce=True,
+    )
+    columns[config.currency_field] = pa.Column(
+        str,
+        pa.Check.isin(config.expected_currencies),
+        nullable=False,
+        required=True,
+        coerce=True,
+    )
+    for field in config.positive_numeric_fields:
+        columns[field] = pa.Column(
+            float,
+            pa.Check.gt(0),
+            nullable=False,
+            required=True,
+            coerce=True,
+        )
+    for field in config.non_negative_numeric_fields:
+        columns[field] = pa.Column(
+            float,
+            pa.Check.ge(0),
+            nullable=True,
+            required=False,
+            coerce=True,
+        )
+
+    schema = pa.DataFrameSchema(columns, strict=False, coerce=True)
+    try:
+        schema.validate(pd.DataFrame(records), lazy=True)
+    except pa.errors.SchemaErrors as error:
+        failure_cases = error.failure_cases
+        column_counts = failure_cases["column"].dropna().astype(str).value_counts().to_dict()
+        return {
+            "failure_case_count": len(failure_cases),
+            "columns": {str(column): int(count) for column, count in column_counts.items()},
+            "sample": failure_cases.head(10).to_dict("records"),
+        }
+    return {}
+
+
+def _pandera_contract_diagnostics(
+    records: Sequence[Mapping[str, Any]],
+    violations: Mapping[str, Any],
+    config: InputDataTestConfig,
+) -> Record:
+    if not violations:
+        return {}
+
+    failure_columns = _mapping(violations.get("columns"))
+    sample_indexes = _failure_sample_indexes(violations.get("sample"))
+    return {
+        "summary": (
+            "Pandera validated the processed dataset as a dataframe and found schema "
+            "violations. This is the formal schema-level view of the same data contract."
+        ),
+        "failure_columns": failure_columns,
+        "sample_records": [
+            _diagnostic_record(index=index, record=records[index], fields=tuple(failure_columns))
+            for index in sample_indexes
+            if 0 <= index < len(records)
+        ],
+        "suggested_actions": [
+            "Use the failed column list to decide whether preprocessing should fix or filter rows.",
+            "Keep Pandera failures aligned with domain checks so machine and human reports agree.",
+        ],
+        "contract": {
+            "positive_numeric_fields": list(config.positive_numeric_fields),
+            "non_negative_numeric_fields": list(config.non_negative_numeric_fields),
+            "expected_shops": list(config.expected_shops),
+            "expected_currencies": list(config.expected_currencies),
+        },
+    }
+
+
+def _failure_sample_indexes(sample: Any) -> list[int]:
+    if not isinstance(sample, Sequence) or isinstance(sample, (str, bytes)):
+        return []
+    indexes: list[int] = []
+    for item in sample:
+        if not isinstance(item, Mapping):
+            continue
+        index = item.get("index")
+        if isinstance(index, int) and not isinstance(index, bool):
+            indexes.append(index)
+    return indexes[:10]
+
+
+def _diagnostic_record(
+    index: int,
+    record: Mapping[str, Any],
+    fields: Sequence[str],
+) -> Record:
+    diagnostic: Record = {
+        "row_index": index,
+        "shop": record.get("shop"),
+        "order_date": record.get("order_date"),
+        "product_name": record.get("product_name"),
+        "main_category": record.get("main_category"),
+        "category": record.get("category"),
+        "unit": record.get("unit"),
+    }
+    for field in fields:
+        diagnostic[field] = record.get(field)
+    for field in ("price_unit", "price_per_unit", "currency"):
+        if field in record:
+            diagnostic[field] = record.get(field)
+    return diagnostic
+
+
+def _top_value_counts(values: Iterable[Any], limit: int = 10) -> list[Record]:
+    counts = Counter(_string_value(value) or "__missing__" for value in values)
+    return [
+        {"value": value, "count": count}
+        for value, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    ]
 
 
 def _invalid_date_counts(records: Sequence[Mapping[str, Any]], date_field: str) -> Record:
@@ -579,20 +803,6 @@ def _dataset_summary(records: Sequence[Mapping[str, Any]], group_field: str) -> 
     }
 
 
-def _summary(checks: Sequence[Mapping[str, Any]]) -> Record:
-    failed_count = sum(1 for check in checks if check.get("status") == "failed")
-    passed_count = sum(1 for check in checks if check.get("status") == "passed")
-    return {
-        "check_count": len(checks),
-        "passed_count": passed_count,
-        "failed_count": failed_count,
-    }
-
-
-def _overall_status(checks: Sequence[Mapping[str, Any]]) -> str:
-    return "failed" if any(check.get("status") == "failed" for check in checks) else "passed"
-
-
 def _non_missing_values(records: Sequence[Mapping[str, Any]], field: str) -> set[str]:
     return {
         value
@@ -645,6 +855,10 @@ def _string_value(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
 
 
 def _is_missing(value: Any) -> bool:

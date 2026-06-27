@@ -15,28 +15,30 @@ Current scope:
 - test the selected association model on the hold-out test dataset;
 - test input data quality and split integrity;
 - test ML model reports against acceptance criteria;
+- aggregate project quality gates for a single pass/fail verdict;
 - generate a data quality report.
-
-Supervised classification and AI test scenarios will be added in the next project stage.
 
 ## Tech Stack
 
 Current stack:
 
 - Python 3.10+
-- Python standard library
 - `argparse` CLI exposed as `ai-test`
 - JSON / JSONC configuration
+- `pandas` / `pyarrow` for tabular data foundations
+- `scikit-learn` for supervised text classification
+- `joblib` for model artifact persistence
+- `pandera` for dataframe validation schemas
+- `pydantic` / `pydantic-settings` for typed configuration foundations
 - Apriori association rules implementation
 - `ruff`, `mypy`, `pre-commit`
 - Git
 
-Planned ML stack:
+Planned reporting and MLOps stack:
 
-- `pandas` / `numpy` for dataset work
-- `scikit-learn` for supervised classification
 - `matplotlib` / `seaborn` for analysis charts
-- `joblib` for model persistence
+- `MLflow` for experiment tracking
+- `DVC` for data and model versioning
 - `pytest` for pipeline checks
 
 ## Project Structure
@@ -47,6 +49,10 @@ config/
 src/ai_testing/
   cli.py                      # ai-test commands
   config.py                   # JSONC config loader
+  core/
+    reports.py                # common report/check schema
+    quality_gates.py          # generic quality gate evaluation
+    artifacts.py              # artifact metadata and hashes
   data_acquisition/
     common.py                 # shared HTTP/data helpers
     kosik.py                  # Kosik adapter and mapping
@@ -60,7 +66,7 @@ src/ai_testing/
   input_data_testing/
     grocery.py                # input data and split integrity tests
   model_training/
-    text_classifier.py        # supervised category classifier training
+    text_classifier.py        # scikit-learn category classifier training
     association.py            # association rules training
   model_validation/
     text_classifier.py        # k-fold classifier validation
@@ -70,10 +76,31 @@ src/ai_testing/
     association.py            # hold-out association test report
   ml_model_testing/
     association.py            # model acceptance tests
+    text_classifier.py        # classifier acceptance tests
+  project_quality/
+    gates.py                  # aggregated project quality gates
   sample_data.py              # synthetic data for smoke checks
 data/                         # generated locally, ignored by git
 secrets/                      # local cookies, ignored by git
 ```
+
+## Architecture
+
+The CLI is intentionally thin: it reads config, resolves artifact paths, and calls pipeline stages.
+Shared report and quality primitives live in `src/ai_testing/core/`.
+
+Current architectural layers:
+
+- `core`: report schema, check results, quality gates, artifact metadata;
+- `data_*`: acquisition, preprocessing, and splitting;
+- `classification_preprocessing`: supervised text/label dataset builder;
+- `model_training`, `model_validation`, `model_testing`: model lifecycle stages;
+- `input_data_testing`, `ml_model_testing`: quality verdicts built on top of reports and artifacts.
+- `project_quality`: one project-level verdict built from data and model quality reports.
+
+Testing reports follow one shape: `report_type`, `subject`, `status`, `summary`, `checks`, and
+optional `artifacts`. Failed checks can include `diagnostics` with affected counts, breakdowns,
+sample records, and suggested actions.
 
 ## Configuration
 
@@ -174,6 +201,8 @@ Run AI testing stages:
 ```powershell
 ai-test test-input-data
 ai-test test-ml-model
+ai-test test-category-ml-model
+ai-test run-quality-gates
 ```
 
 Use a custom config:
@@ -268,7 +297,7 @@ ai-test test-category-classifier
 ```
 
 Artifacts are written to `data/classification/category/`, `data/models/category_classifier.json`,
-`data/validation/category_classifier_validation_report.json`, and
+`data/models/category_classifier.joblib`, `data/validation/category_classifier_validation_report.json`, and
 `data/testing/category_classifier_test_report.json`.
 
 Validation accuracy, precision, recall, and F1 are used while evaluating and tuning the model. Test
@@ -328,6 +357,7 @@ count, and strongest test rules.
 Input data testing checks model-ready data and split artifacts:
 
 - required feature columns exist;
+- the processed dataset satisfies a `pandera` dataframe contract;
 - protected identifiers are absent;
 - critical fields are not missing;
 - category/product coverage stays within thresholds;
@@ -343,12 +373,26 @@ The report is written to `data/testing/input_data_test_report.json`.
 ## ML Model Testing
 
 ML model testing checks the trained association model and the validation/test reports against
-acceptance criteria.
+acceptance criteria. The supervised category classifier has a separate acceptance report with
+accuracy, precision, recall, F1, fold stability, hold-out stability, and feature-leakage checks.
 
 ```powershell
 ai-test test-ml-model
+ai-test test-category-ml-model
 ```
 
-The report is written to `data/testing/ml_model_test_report.json`. It verifies model identity,
-training/test separation, forbidden feature usage, validation metrics, final test metrics, and
-validation-vs-test stability.
+Reports are written to `data/testing/ml_model_test_report.json` and
+`data/testing/category_ml_model_test_report.json`. They verify model identity, training/test
+separation, forbidden feature usage, validation metrics, final test metrics, and validation-vs-test
+stability.
+
+## Project Quality Gates
+
+Project quality gates aggregate the input data, association model, and category classifier quality
+reports into one pass/fail report.
+
+```powershell
+ai-test run-quality-gates
+```
+
+The report is written to `data/testing/project_quality_report.json`.

@@ -17,6 +17,7 @@ from ai_testing.data_acquisition.common import (
     mapping_list_value,
     mapping_value,
     materialize_mapping_list,
+    ordered_quantity_or_delivered,
     require_json_object,
     text_value,
 )
@@ -106,6 +107,7 @@ class KosikApiClient:
             }
         )
         client = self._client()
+        print(query)
         return require_json_object(client.get_json(f"{self.order_list_path}?{query}"), "Kosik")
 
     def get_order_detail(self, order_id: str | int) -> JsonObject:
@@ -221,6 +223,10 @@ def _normalize_order_product(
     package_quantity = mapping_value(product, "productQuantity")
     order_created_at = text_value(order_detail.get("created")) or fallback_order_created_at
     quantity_delivered = extract_number(item.get("deliveredQuantity"))
+    quantity_ordered = ordered_quantity_or_delivered(
+        extract_number(item.get("orderedQuantity")),
+        quantity_delivered,
+    )
 
     record: Record = {
         "shop": "kosik",
@@ -243,7 +249,7 @@ def _normalize_order_product(
         "category_path": _category_path(categories),
         "category_ids": [_node_id(node) for node in categories if _node_id(node) is not None],
         "quantity": quantity_delivered,
-        "quantity_ordered": extract_number(item.get("orderedQuantity")),
+        "quantity_ordered": quantity_ordered,
         "quantity_delivered": quantity_delivered,
         "unit": text_value(product.get("unit")),
         "package_quantity": extract_number((package_quantity or {}).get("value")),

@@ -32,7 +32,7 @@
       "output": "data/raw/kosik_order_items.json",
 
       // Number of order headers requested per page. Pagination continues until an empty page.
-      "order_page_limit": 150,
+      "order_page_limit": 50,
 
       // Include archived historical orders in the dataset.
       "include_archived_orders": true,
@@ -235,6 +235,7 @@
 
       // Local model artifact. Ignored by git because it is derived from local data.
       "output": "data/models/category_classifier.json",
+      "estimator_output": "data/models/category_classifier.joblib",
 
       // Text and label fields in the classification dataset.
       "text_field": "text",
@@ -442,6 +443,54 @@
       "max_mean_abs_test_confidence_gap": 0.2,
       "max_validation_test_confidence_delta": 0.15,
       "max_validation_test_lift_delta": 0.25
+    },
+
+    "category_classifier": {
+      // Existing classifier model, preprocessing manifest, and reports used as test evidence.
+      "model_input": "data/models/category_classifier.json",
+      "classification_manifest_input": "data/classification/category/classification_manifest.json",
+      "validation_report_input": "data/validation/category_classifier_validation_report.json",
+      "test_report_input": "data/testing/category_classifier_test_report.json",
+      "test_dataset_input": "data/classification/category/test.json",
+
+      // ML model acceptance report for the supervised classifier.
+      "output": "data/testing/category_ml_model_test_report.json",
+
+      // Source fields that must not be used as text features.
+      "forbidden_feature_fields": [
+        "order_id",
+        "order_number",
+        "order_item_id",
+        "product_id",
+        "product_slug",
+        "product_url",
+        "main_category_id",
+        "category_id",
+        "category_ids",
+        "main_category",
+        "category",
+        "category_path",
+        "product_group"
+      ],
+
+      // Acceptance thresholds for the current supervised category classifier.
+      "min_test_accuracy": 0.9,
+      "min_test_macro_precision": 0.7,
+      "min_test_macro_recall": 0.7,
+      "min_test_macro_f1": 0.7,
+      "min_test_weighted_f1": 0.9,
+      "max_validation_test_accuracy_delta": 0.05,
+      "max_validation_test_macro_f1_delta": 0.08
     }
+  },
+
+  "project_quality": {
+    // Final quality gate inputs.
+    "input_data_report": "data/testing/input_data_test_report.json",
+    "association_model_report": "data/testing/ml_model_test_report.json",
+    "category_model_report": "data/testing/category_ml_model_test_report.json",
+
+    // Aggregated project verdict.
+    "output": "data/testing/project_quality_report.json"
   }
 }

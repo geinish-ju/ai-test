@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from pathlib import PurePath
 from typing import Any
 
+from ai_testing.core import add_check as _add_check
+from ai_testing.core import add_threshold_check as _add_threshold_check
+from ai_testing.core import build_standard_report
+
 Record = dict[str, Any]
 
 
@@ -262,66 +266,26 @@ def test_association_ml_model(
     )
 
     return AssociationMLModelTestResult(
-        report={
-            "step": "ML model testing",
-            "testing_type": "association model acceptance testing",
-            "status": _overall_status(checks),
-            "summary": _summary(checks),
-            "model": {
-                "model_type": model.get("model_type"),
-                "algorithm": model.get("algorithm"),
-                "learning_type": model.get("learning_type"),
-                "training_input": model.get("training_input"),
-                "rule_count": model_summary.get("rule_count"),
-                "exported_rule_count": model_summary.get("exported_rule_count"),
-                "item_field": model_parameters.get("item_field"),
+        report=build_standard_report(
+            report_type="model_quality_test",
+            subject="association_rules",
+            step="ML model testing",
+            testing_type="association model acceptance testing",
+            checks=checks,
+            details={
+                "model": {
+                    "model_type": model.get("model_type"),
+                    "algorithm": model.get("algorithm"),
+                    "learning_type": model.get("learning_type"),
+                    "training_input": model.get("training_input"),
+                    "rule_count": model_summary.get("rule_count"),
+                    "exported_rule_count": model_summary.get("exported_rule_count"),
+                    "item_field": model_parameters.get("item_field"),
+                },
+                "validation_metrics": validation_summary,
+                "test_metrics": test_summary,
             },
-            "validation_metrics": validation_summary,
-            "test_metrics": test_summary,
-            "checks": checks,
-        }
-    )
-
-
-def _add_threshold_check(
-    checks: list[Record],
-    check_id: str,
-    value: float | None,
-    threshold: float,
-    direction: str,
-    severity: str,
-    message: str,
-) -> None:
-    passed = value is not None and (value >= threshold if direction == ">=" else value <= threshold)
-    _add_check(
-        checks,
-        check_id=check_id,
-        passed=passed,
-        severity=severity,
-        message=message,
-        observed={"value": value},
-        expected={direction: threshold},
-    )
-
-
-def _add_check(
-    checks: list[Record],
-    check_id: str,
-    passed: bool,
-    severity: str,
-    message: str,
-    observed: Any,
-    expected: Any,
-) -> None:
-    checks.append(
-        {
-            "id": check_id,
-            "status": "passed" if passed else "failed",
-            "severity": severity,
-            "message": message,
-            "observed": observed,
-            "expected": expected,
-        }
+        )
     )
 
 
@@ -365,20 +329,6 @@ def _absolute_delta(left: Any, right: Any) -> float | None:
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
-
-
-def _summary(checks: Sequence[Mapping[str, Any]]) -> Record:
-    failed_count = sum(1 for check in checks if check.get("status") == "failed")
-    passed_count = sum(1 for check in checks if check.get("status") == "passed")
-    return {
-        "check_count": len(checks),
-        "passed_count": passed_count,
-        "failed_count": failed_count,
-    }
-
-
-def _overall_status(checks: Sequence[Mapping[str, Any]]) -> str:
-    return "failed" if any(check.get("status") == "failed" for check in checks) else "passed"
 
 
 def _int_value(value: Any) -> int:
