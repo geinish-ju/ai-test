@@ -8,9 +8,13 @@ Current scope:
 - normalize both shops into one raw dataset;
 - preprocess raw data into a compact modeling dataset;
 - create training, validation, and test datasets;
+- build supervised classification datasets;
+- train, validate, and test a supervised category classifier;
 - train an association rules model on training data;
 - validate association rules on k-fold validation data;
 - test the selected association model on the hold-out test dataset;
+- test input data quality and split integrity;
+- test ML model reports against acceptance criteria;
 - generate a data quality report.
 
 Supervised classification and AI test scenarios will be added in the next project stage.
@@ -51,12 +55,21 @@ src/ai_testing/
     grocery.py                # feature selection and quality report
   data_splitting/
     grocery.py                # train/test and k-fold validation split
+  classification_preprocessing/
+    grocery.py                # supervised text/label dataset builder
+  input_data_testing/
+    grocery.py                # input data and split integrity tests
   model_training/
+    text_classifier.py        # supervised category classifier training
     association.py            # association rules training
   model_validation/
+    text_classifier.py        # k-fold classifier validation
     association.py            # k-fold association evaluation
   model_testing/
+    text_classifier.py        # hold-out classifier test report
     association.py            # hold-out association test report
+  ml_model_testing/
+    association.py            # model acceptance tests
   sample_data.py              # synthetic data for smoke checks
 data/                         # generated locally, ignored by git
 secrets/                      # local cookies, ignored by git
@@ -124,6 +137,20 @@ Create training, validation, and test datasets:
 ai-test split-datasets
 ```
 
+Build supervised classification datasets:
+
+```powershell
+ai-test build-classification-dataset
+```
+
+Train and evaluate the supervised category classifier:
+
+```powershell
+ai-test train-category-classifier
+ai-test validate-category-classifier
+ai-test test-category-classifier
+```
+
 Train association rules on training data:
 
 ```powershell
@@ -140,6 +167,13 @@ Run the final hold-out test:
 
 ```powershell
 ai-test test-associations
+```
+
+Run AI testing stages:
+
+```powershell
+ai-test test-input-data
+ai-test test-ml-model
 ```
 
 Use a custom config:
@@ -221,13 +255,34 @@ ai-test split-datasets --n-splits 5 --test-size 0.2
 
 Split artifacts are written under `data/splits/` and are ignored by git.
 
+## Supervised Classification
+
+The supervised model predicts product `main_category` from product text. By default, the text is built
+from `product_name` and `brand`; category fields are not used as features to avoid leakage.
+
+```powershell
+ai-test build-classification-dataset
+ai-test train-category-classifier
+ai-test validate-category-classifier
+ai-test test-category-classifier
+```
+
+Artifacts are written to `data/classification/category/`, `data/models/category_classifier.json`,
+`data/validation/category_classifier_validation_report.json`, and
+`data/testing/category_classifier_test_report.json`.
+
+Validation accuracy is used while evaluating and tuning the model. Test accuracy is the final
+hold-out result after the model and parameters are selected.
+
 ## Model Training
 
-The current model is association rules for market basket analysis. It is unsupervised and is not the
-same as the later supervised classification task.
+The project currently has two model families:
 
-By default, training uses `data/splits/train_validation.json`, which excludes the hold-out test set.
-For fold-specific experiments, pass a fold training file explicitly:
+- supervised text classification for product categories;
+- unsupervised association rules for market basket analysis.
+
+Association training uses `data/splits/train_validation.json`, which excludes the hold-out test set.
+For fold-specific association experiments, pass a fold training file explicitly:
 
 ```powershell
 ai-test train-associations
@@ -267,3 +322,33 @@ ai-test test-associations
 The test report is written under `data/testing/`. Use this report once after validation/tuning is
 finished. It includes test confidence, test lift, coverage, hit rate, train-vs-test gaps, stable rule
 count, and strongest test rules.
+
+## Input Data Testing
+
+Input data testing checks model-ready data and split artifacts:
+
+- required feature columns exist;
+- protected identifiers are absent;
+- critical fields are not missing;
+- category/product coverage stays within thresholds;
+- dates, calendar features, numeric values, and duplicates are valid;
+- train/test/fold baskets do not leak across datasets.
+
+```powershell
+ai-test test-input-data
+```
+
+The report is written to `data/testing/input_data_test_report.json`.
+
+## ML Model Testing
+
+ML model testing checks the trained association model and the validation/test reports against
+acceptance criteria.
+
+```powershell
+ai-test test-ml-model
+```
+
+The report is written to `data/testing/ml_model_test_report.json`. It verifies model identity,
+training/test separation, forbidden feature usage, validation metrics, final test metrics, and
+validation-vs-test stability.

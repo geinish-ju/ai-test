@@ -7,6 +7,10 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from ai_testing.classification_preprocessing import (
+    ClassificationPreprocessingConfig,
+    build_classification_records,
+)
 from ai_testing.config import (
     config_bool,
     config_float,
@@ -31,12 +35,30 @@ from ai_testing.data_preprocessing import (
     preprocess_grocery_records,
 )
 from ai_testing.data_splitting import DatasetSplitConfig, split_dataset_records
-from ai_testing.model_testing import AssociationTestConfig, test_association_rules
-from ai_testing.model_training import AssociationRulesConfig, train_association_rules
+from ai_testing.input_data_testing import InputDataFold, InputDataTestConfig, test_input_data
+from ai_testing.ml_model_testing import (
+    AssociationMLModelTestConfig,
+    test_association_ml_model,
+)
+from ai_testing.model_testing import (
+    AssociationTestConfig,
+    TextClassifierTestConfig,
+    test_association_rules,
+    test_text_classifier,
+)
+from ai_testing.model_training import (
+    AssociationRulesConfig,
+    TextClassifierConfig,
+    train_association_rules,
+    train_text_classifier,
+)
 from ai_testing.model_validation import (
     AssociationValidationConfig,
     AssociationValidationFold,
+    TextClassificationValidationConfig,
+    TextClassificationValidationFold,
     validate_association_rules,
+    validate_text_classifier,
 )
 from ai_testing.sample_data import sample_grocery_order_item_records
 
@@ -48,17 +70,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     kosik_config = config_section(acquisition_config, "kosik")
     rohlik_config = config_section(acquisition_config, "rohlik")
     preprocessing_config = config_section(app_config, "data_preprocessing")
+    classification_preprocessing_config = config_section(
+        app_config,
+        "classification_preprocessing",
+        "category_classifier",
+    )
     splitting_config = config_section(app_config, "data_splitting")
     model_training_config = config_section(app_config, "model_training")
     association_config = config_section(model_training_config, "association_rules")
+    category_classifier_config = config_section(model_training_config, "category_classifier")
     model_validation_config = config_section(app_config, "model_validation")
     association_validation_config = config_section(
         model_validation_config,
         "association_rules",
     )
+    category_classifier_validation_config = config_section(
+        model_validation_config,
+        "category_classifier",
+    )
     model_testing_config = config_section(app_config, "model_testing")
     association_testing_config = config_section(
         model_testing_config,
+        "association_rules",
+    )
+    category_classifier_testing_config = config_section(
+        model_testing_config,
+        "category_classifier",
+    )
+    input_data_testing_config = config_section(app_config, "input_data_testing")
+    ml_model_testing_config = config_section(app_config, "ml_model_testing")
+    association_ml_model_testing_config = config_section(
+        ml_model_testing_config,
         "association_rules",
     )
     default_include_raw = config_bool(acquisition_config, "include_raw", False)
@@ -387,6 +429,204 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Deterministic split seed",
     )
 
+    classification_dataset_parser = subparsers.add_parser(
+        "build-classification-dataset",
+        help="Build supervised text classification datasets from split grocery records",
+    )
+    classification_dataset_parser.add_argument(
+        "--processed-input",
+        default=config_str(
+            classification_preprocessing_config,
+            "processed_input",
+            "data/processed/grocery_order_items.json",
+        ),
+        help="Path to preprocessed grocery records used to determine allowed labels",
+    )
+    classification_dataset_parser.add_argument(
+        "--train-validation-input",
+        default=config_str(
+            classification_preprocessing_config,
+            "train_validation_input",
+            "data/splits/train_validation.json",
+        ),
+        help="Path to train-validation grocery records",
+    )
+    classification_dataset_parser.add_argument(
+        "--test-input",
+        default=config_str(
+            classification_preprocessing_config,
+            "test_input",
+            "data/splits/test.json",
+        ),
+        help="Path to hold-out test grocery records",
+    )
+    classification_dataset_parser.add_argument(
+        "--folds-dir",
+        default=config_str(
+            classification_preprocessing_config,
+            "folds_dir",
+            "data/splits/folds",
+        ),
+        help="Directory containing grocery fold files",
+    )
+    classification_dataset_parser.add_argument(
+        "--output-dir",
+        default=config_str(
+            classification_preprocessing_config,
+            "output_dir",
+            "data/classification/category",
+        ),
+        help="Directory to write classification datasets",
+    )
+    classification_dataset_parser.add_argument(
+        "--target-field",
+        default=config_str(classification_preprocessing_config, "target_field", "main_category"),
+        help="Label field for supervised classification",
+    )
+    classification_dataset_parser.add_argument(
+        "--min-label-count",
+        type=int,
+        default=config_int(classification_preprocessing_config, "min_label_count", 20),
+        help="Minimum global label count kept in classification datasets",
+    )
+    classification_dataset_parser.set_defaults(
+        text_fields=config_str_tuple(
+            classification_preprocessing_config,
+            "text_fields",
+            ("product_name", "brand"),
+        ),
+        metadata_fields=config_str_tuple(
+            classification_preprocessing_config,
+            "metadata_fields",
+            ("basket_id", "shop", "order_date"),
+        ),
+    )
+
+    category_classifier_parser = subparsers.add_parser(
+        "train-category-classifier",
+        help="Train a supervised product category text classifier",
+    )
+    category_classifier_parser.add_argument(
+        "--input",
+        default=config_str(
+            category_classifier_config,
+            "input",
+            "data/classification/category/train_validation.json",
+        ),
+        help="Path to classification training records",
+    )
+    category_classifier_parser.add_argument(
+        "--output",
+        default=config_str(
+            category_classifier_config,
+            "output",
+            "data/models/category_classifier.json",
+        ),
+        help="Path to write category classifier model JSON",
+    )
+    category_classifier_parser.add_argument(
+        "--text-field",
+        default=config_str(category_classifier_config, "text_field", "text"),
+        help="Text feature field",
+    )
+    category_classifier_parser.add_argument(
+        "--label-field",
+        default=config_str(category_classifier_config, "label_field", "label"),
+        help="Supervised label field",
+    )
+    category_classifier_parser.add_argument(
+        "--alpha",
+        type=float,
+        default=config_float(category_classifier_config, "alpha", 1.0),
+        help="Naive Bayes Laplace smoothing parameter",
+    )
+    category_classifier_parser.add_argument(
+        "--min-token-length",
+        type=int,
+        default=config_int(category_classifier_config, "min_token_length", 2),
+        help="Minimum token length",
+    )
+    category_classifier_parser.add_argument(
+        "--max-vocabulary-size",
+        type=int,
+        default=config_int(category_classifier_config, "max_vocabulary_size", 5000),
+        help="Maximum number of training tokens kept in the vocabulary",
+    )
+
+    category_classifier_validation_parser = subparsers.add_parser(
+        "validate-category-classifier",
+        help="Validate the supervised category classifier across k-fold datasets",
+    )
+    category_classifier_validation_parser.add_argument(
+        "--folds-dir",
+        default=config_str(
+            category_classifier_validation_config,
+            "folds_dir",
+            "data/classification/category/folds",
+        ),
+        help="Directory containing classification fold files",
+    )
+    category_classifier_validation_parser.add_argument(
+        "--output",
+        default=config_str(
+            category_classifier_validation_config,
+            "output",
+            "data/validation/category_classifier_validation_report.json",
+        ),
+        help="Path to write category classifier validation report JSON",
+    )
+    _add_text_classifier_args(
+        category_classifier_validation_parser, category_classifier_validation_config
+    )
+
+    category_classifier_test_parser = subparsers.add_parser(
+        "test-category-classifier",
+        help="Test the trained supervised category classifier on the hold-out test dataset",
+    )
+    category_classifier_test_parser.add_argument(
+        "--model-input",
+        default=config_str(
+            category_classifier_testing_config,
+            "model_input",
+            "data/models/category_classifier.json",
+        ),
+        help="Path to trained category classifier model JSON",
+    )
+    category_classifier_test_parser.add_argument(
+        "--test-input",
+        default=config_str(
+            category_classifier_testing_config,
+            "test_input",
+            "data/classification/category/test.json",
+        ),
+        help="Path to classification hold-out test records",
+    )
+    category_classifier_test_parser.add_argument(
+        "--output",
+        default=config_str(
+            category_classifier_testing_config,
+            "output",
+            "data/testing/category_classifier_test_report.json",
+        ),
+        help="Path to write category classifier final test report JSON",
+    )
+    category_classifier_test_parser.add_argument(
+        "--text-field",
+        default=config_str(category_classifier_testing_config, "text_field", "text"),
+        help="Text feature field",
+    )
+    category_classifier_test_parser.add_argument(
+        "--label-field",
+        default=config_str(category_classifier_testing_config, "label_field", "label"),
+        help="Supervised label field",
+    )
+    category_classifier_test_parser.add_argument(
+        "--top-confusions",
+        type=int,
+        default=config_int(category_classifier_testing_config, "top_confusions", 20),
+        help="Number of largest classification confusions to store",
+    )
+
     association_parser = subparsers.add_parser(
         "train-associations",
         help="Train association rules on the training dataset",
@@ -591,6 +831,204 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Number of strongest test rules to store",
     )
 
+    input_data_test_parser = subparsers.add_parser(
+        "test-input-data",
+        help="Test input data quality and train/validation/test split integrity",
+    )
+    input_data_test_parser.add_argument(
+        "--processed-input",
+        default=config_str(
+            input_data_testing_config,
+            "processed_input",
+            "data/processed/grocery_order_items.json",
+        ),
+        help="Path to preprocessed grocery records",
+    )
+    input_data_test_parser.add_argument(
+        "--train-validation-input",
+        default=config_str(
+            input_data_testing_config,
+            "train_validation_input",
+            "data/splits/train_validation.json",
+        ),
+        help="Path to train-validation records",
+    )
+    input_data_test_parser.add_argument(
+        "--test-input",
+        default=config_str(input_data_testing_config, "test_input", "data/splits/test.json"),
+        help="Path to hold-out test records",
+    )
+    input_data_test_parser.add_argument(
+        "--folds-dir",
+        default=config_str(input_data_testing_config, "folds_dir", "data/splits/folds"),
+        help="Directory containing fold_NN_train and fold_NN_validation files",
+    )
+    input_data_test_parser.add_argument(
+        "--output",
+        default=config_str(
+            input_data_testing_config,
+            "output",
+            "data/testing/input_data_test_report.json",
+        ),
+        help="Path to write input data test report JSON",
+    )
+    input_data_test_parser.add_argument(
+        "--group-field",
+        default=config_str(input_data_testing_config, "group_field", "basket_id"),
+        help="Field used to keep related rows in the same split",
+    )
+    input_data_test_parser.add_argument(
+        "--stratify-field",
+        default=config_str(input_data_testing_config, "stratify_field", "shop"),
+        help="Field used to compare train/test distributions",
+    )
+    input_data_test_parser.add_argument(
+        "--max-coverage-missing-rate",
+        type=float,
+        default=config_float(input_data_testing_config, "max_coverage_missing_rate", 0.4),
+        help="Maximum missing rate for configured coverage fields",
+    )
+    input_data_test_parser.add_argument(
+        "--max-split-distribution-delta",
+        type=float,
+        default=config_float(input_data_testing_config, "max_split_distribution_delta", 0.2),
+        help="Maximum absolute distribution delta between train-validation and test",
+    )
+    input_data_test_parser.set_defaults(
+        required_fields=config_str_tuple(
+            input_data_testing_config,
+            "required_fields",
+            DEFAULT_OUTPUT_FIELDS,
+        ),
+        protected_fields=config_str_tuple(
+            input_data_testing_config,
+            "protected_fields",
+            (
+                *DEFAULT_IDENTIFIER_FIELDS,
+                *DEFAULT_EXACT_TIME_FIELDS,
+                "quantity",
+                "quantity_delivered",
+                "price_total",
+                "category_path",
+                "product_enriched",
+            ),
+        ),
+        critical_fields=config_str_tuple(
+            input_data_testing_config,
+            "critical_fields",
+            ("shop", "order_date", "product_name", "quantity_ordered", "currency", "basket_id"),
+        ),
+        coverage_fields=config_str_tuple(
+            input_data_testing_config,
+            "coverage_fields",
+            ("brand", "main_category", "category", "product_group"),
+        ),
+        expected_shops=config_str_tuple(
+            input_data_testing_config,
+            "expected_shops",
+            ("kosik", "rohlik"),
+        ),
+        expected_currencies=config_str_tuple(
+            input_data_testing_config,
+            "expected_currencies",
+            ("CZK",),
+        ),
+    )
+
+    ml_model_test_parser = subparsers.add_parser(
+        "test-ml-model",
+        help="Test the association model against validation and final test acceptance criteria",
+    )
+    ml_model_test_parser.add_argument(
+        "--model-input",
+        default=config_str(
+            association_ml_model_testing_config,
+            "model_input",
+            "data/models/association_rules.json",
+        ),
+        help="Path to trained association rules model JSON",
+    )
+    ml_model_test_parser.add_argument(
+        "--validation-report-input",
+        default=config_str(
+            association_ml_model_testing_config,
+            "validation_report_input",
+            "data/validation/association_validation_report.json",
+        ),
+        help="Path to k-fold validation report JSON",
+    )
+    ml_model_test_parser.add_argument(
+        "--test-report-input",
+        default=config_str(
+            association_ml_model_testing_config,
+            "test_report_input",
+            "data/testing/association_test_report.json",
+        ),
+        help="Path to final hold-out test report JSON",
+    )
+    ml_model_test_parser.add_argument(
+        "--test-dataset-input",
+        default=config_str(
+            association_ml_model_testing_config,
+            "test_dataset_input",
+            "data/splits/test.json",
+        ),
+        help="Path used to ensure the model was not trained on the hold-out test dataset",
+    )
+    ml_model_test_parser.add_argument(
+        "--output",
+        default=config_str(
+            association_ml_model_testing_config,
+            "output",
+            "data/testing/ml_model_test_report.json",
+        ),
+        help="Path to write ML model test report JSON",
+    )
+    ml_model_test_parser.add_argument(
+        "--min-mean-test-confidence",
+        type=float,
+        default=config_float(association_ml_model_testing_config, "min_mean_test_confidence", 0.2),
+    )
+    ml_model_test_parser.add_argument(
+        "--min-mean-test-lift",
+        type=float,
+        default=config_float(association_ml_model_testing_config, "min_mean_test_lift", 1.0),
+    )
+    ml_model_test_parser.add_argument(
+        "--max-mean-abs-test-confidence-gap",
+        type=float,
+        default=config_float(
+            association_ml_model_testing_config,
+            "max_mean_abs_test_confidence_gap",
+            0.2,
+        ),
+    )
+    ml_model_test_parser.add_argument(
+        "--max-validation-test-confidence-delta",
+        type=float,
+        default=config_float(
+            association_ml_model_testing_config,
+            "max_validation_test_confidence_delta",
+            0.15,
+        ),
+    )
+    ml_model_test_parser.add_argument(
+        "--max-validation-test-lift-delta",
+        type=float,
+        default=config_float(
+            association_ml_model_testing_config,
+            "max_validation_test_lift_delta",
+            0.25,
+        ),
+    )
+    ml_model_test_parser.set_defaults(
+        forbidden_feature_fields=config_str_tuple(
+            association_ml_model_testing_config,
+            "forbidden_feature_fields",
+            DEFAULT_IDENTIFIER_FIELDS,
+        ),
+    )
+
     args = parser.parse_args(parser_argv)
     if args.command == "export-kosik":
         records = _fetch_kosik(args)
@@ -655,6 +1093,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         _split_datasets(args)
         return 0
 
+    if args.command == "build-classification-dataset":
+        _build_classification_dataset(args)
+        return 0
+
+    if args.command == "train-category-classifier":
+        _train_category_classifier(args)
+        return 0
+
+    if args.command == "validate-category-classifier":
+        _validate_category_classifier(args)
+        return 0
+
+    if args.command == "test-category-classifier":
+        _test_category_classifier(args)
+        return 0
+
     if args.command == "train-associations":
         _train_associations(args)
         return 0
@@ -665,6 +1119,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "test-associations":
         _test_associations(args)
+        return 0
+
+    if args.command == "test-input-data":
+        _test_input_data(args)
+        return 0
+
+    if args.command == "test-ml-model":
+        _test_ml_model(args)
         return 0
 
     return 2
@@ -715,6 +1177,46 @@ def _add_common_export_args(
         dest="product_enrichment",
         action="store_false",
         help=argparse.SUPPRESS,
+    )
+
+
+def _add_text_classifier_args(
+    parser: argparse.ArgumentParser,
+    config: Mapping[str, object],
+) -> None:
+    parser.add_argument(
+        "--text-field",
+        default=config_str(config, "text_field", "text"),
+        help="Text feature field",
+    )
+    parser.add_argument(
+        "--label-field",
+        default=config_str(config, "label_field", "label"),
+        help="Supervised label field",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=config_float(config, "alpha", 1.0),
+        help="Naive Bayes Laplace smoothing parameter",
+    )
+    parser.add_argument(
+        "--min-token-length",
+        type=int,
+        default=config_int(config, "min_token_length", 2),
+        help="Minimum token length",
+    )
+    parser.add_argument(
+        "--max-vocabulary-size",
+        type=int,
+        default=config_int(config, "max_vocabulary_size", 5000),
+        help="Maximum number of training tokens kept in the vocabulary",
+    )
+    parser.add_argument(
+        "--top-confusions",
+        type=int,
+        default=config_int(config, "top_confusions", 20),
+        help="Number of largest classification confusions to store",
     )
 
 
@@ -985,6 +1487,240 @@ def _split_datasets(args: argparse.Namespace) -> None:
     )
 
 
+def _build_classification_dataset(args: argparse.Namespace) -> None:
+    output_dir = Path(args.output_dir)
+    folds_output_dir = output_dir / "folds"
+    manifest_path = output_dir / "classification_manifest.json"
+    config = ClassificationPreprocessingConfig(
+        target_field=str(args.target_field),
+        text_fields=tuple(args.text_fields),
+        metadata_fields=tuple(args.metadata_fields),
+        min_label_count=int(args.min_label_count),
+    )
+    processed_result = build_classification_records(
+        _read_records(Path(args.processed_input)),
+        config=config,
+    )
+    train_validation_result = build_classification_records(
+        _read_records(Path(args.train_validation_input)),
+        config=config,
+        allowed_labels=processed_result.allowed_labels,
+    )
+    test_result = build_classification_records(
+        _read_records(Path(args.test_input)),
+        config=config,
+        allowed_labels=processed_result.allowed_labels,
+    )
+    folds = _read_input_data_folds(Path(args.folds_dir))
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    folds_output_dir.mkdir(parents=True, exist_ok=True)
+    train_validation_path = output_dir / "train_validation.json"
+    test_path = output_dir / "test.json"
+    _write_json(train_validation_result.records, train_validation_path)
+    _write_json(test_result.records, test_path)
+
+    fold_reports: list[dict[str, object]] = []
+    for fold in folds:
+        train_result = build_classification_records(
+            fold.train_records,
+            config=config,
+            allowed_labels=processed_result.allowed_labels,
+        )
+        validation_result = build_classification_records(
+            fold.validation_records,
+            config=config,
+            allowed_labels=processed_result.allowed_labels,
+        )
+        fold_prefix = f"fold_{fold.fold_index:02d}"
+        train_path = folds_output_dir / f"{fold_prefix}_train.json"
+        validation_path = folds_output_dir / f"{fold_prefix}_validation.json"
+        _write_json(train_result.records, train_path)
+        _write_json(validation_result.records, validation_path)
+        fold_reports.append(
+            {
+                "fold_index": fold.fold_index,
+                "train": train_result.report,
+                "validation": validation_result.report,
+                "outputs": {
+                    "train": str(train_path),
+                    "validation": str(validation_path),
+                },
+            }
+        )
+
+    manifest = {
+        "step": "Supervised classification dataset preprocessing",
+        "task": "product category text classification",
+        "source_inputs": {
+            "processed": str(args.processed_input),
+            "train_validation": str(args.train_validation_input),
+            "test": str(args.test_input),
+            "folds_dir": str(args.folds_dir),
+        },
+        "outputs": {
+            "train_validation": str(train_validation_path),
+            "test": str(test_path),
+            "folds_dir": str(folds_output_dir),
+            "manifest": str(manifest_path),
+        },
+        "global": processed_result.report,
+        "train_validation": train_validation_result.report,
+        "test": test_result.report,
+        "folds": fold_reports,
+    }
+    _write_json(manifest, manifest_path)
+    print(
+        json.dumps(
+            {
+                "output_dir": str(output_dir),
+                "target_field": config.target_field,
+                "text_fields": list(config.text_fields),
+                "allowed_label_count": len(processed_result.allowed_labels),
+                "train_validation_record_count": train_validation_result.report[
+                    "output_record_count"
+                ],
+                "test_record_count": test_result.report["output_record_count"],
+                "fold_count": len(fold_reports),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def _train_category_classifier(args: argparse.Namespace) -> None:
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+    records = _read_records(input_path)
+    try:
+        result = train_text_classifier(
+            records,
+            config=TextClassifierConfig(
+                text_field=str(args.text_field),
+                label_field=str(args.label_field),
+                alpha=float(args.alpha),
+                min_token_length=int(args.min_token_length),
+                max_vocabulary_size=int(args.max_vocabulary_size),
+            ),
+        )
+    except ValueError as error:
+        raise SystemExit(f"Cannot train category classifier: {error}") from error
+
+    model = {
+        **result.model,
+        "training_input": str(input_path),
+        "note": "Trained on the supervised training split only. Hold-out test data is not used.",
+    }
+    _write_json(model, output_path)
+    summary = model["summary"]
+    print(
+        json.dumps(
+            {
+                "input": str(input_path),
+                "output": str(output_path),
+                "model_type": model["model_type"],
+                "algorithm": model["algorithm"],
+                "training_example_count": summary["training_example_count"],
+                "class_count": summary["class_count"],
+                "vocabulary_size": summary["vocabulary_size"],
+                "majority_class": summary["majority_class"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def _validate_category_classifier(args: argparse.Namespace) -> None:
+    folds_dir = Path(args.folds_dir)
+    output_path = Path(args.output)
+    folds = _read_text_classification_folds(folds_dir)
+    try:
+        result = validate_text_classifier(
+            folds,
+            config=TextClassificationValidationConfig(
+                text_field=str(args.text_field),
+                label_field=str(args.label_field),
+                alpha=float(args.alpha),
+                min_token_length=int(args.min_token_length),
+                max_vocabulary_size=int(args.max_vocabulary_size),
+                top_confusions=int(args.top_confusions),
+            ),
+        )
+    except ValueError as error:
+        raise SystemExit(f"Cannot validate category classifier: {error}") from error
+
+    report = {
+        **result.report,
+        "folds_dir": str(folds_dir),
+        "output": str(output_path),
+    }
+    _write_json(report, output_path)
+    summary = report["summary"]
+    print(
+        json.dumps(
+            {
+                "folds_dir": str(folds_dir),
+                "output": str(output_path),
+                "fold_count": summary["fold_count"],
+                "mean_accuracy": summary["mean_accuracy"],
+                "std_accuracy": summary["std_accuracy"],
+                "mean_macro_f1": summary["mean_macro_f1"],
+                "mean_weighted_f1": summary["mean_weighted_f1"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def _test_category_classifier(args: argparse.Namespace) -> None:
+    model_path = Path(args.model_input)
+    test_input_path = Path(args.test_input)
+    output_path = Path(args.output)
+    model = _read_json_object(model_path)
+    test_records = _read_records(test_input_path)
+    try:
+        result = test_text_classifier(
+            model,
+            test_records,
+            config=TextClassifierTestConfig(
+                text_field=str(args.text_field),
+                label_field=str(args.label_field),
+                top_confusions=int(args.top_confusions),
+            ),
+        )
+    except ValueError as error:
+        raise SystemExit(f"Cannot test category classifier: {error}") from error
+
+    report = {
+        **result.report,
+        "model_input": str(model_path),
+        "test_input": str(test_input_path),
+        "output": str(output_path),
+    }
+    _write_json(report, output_path)
+    test_summary = report["test"]
+    print(
+        json.dumps(
+            {
+                "model_input": str(model_path),
+                "test_input": str(test_input_path),
+                "output": str(output_path),
+                "record_count": test_summary["record_count"],
+                "evaluated_record_count": test_summary["evaluated_record_count"],
+                "class_count": test_summary["class_count"],
+                "accuracy": test_summary["accuracy"],
+                "macro_f1": test_summary["macro_f1"],
+                "weighted_f1": test_summary["weighted_f1"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
 def _train_associations(args: argparse.Namespace) -> None:
     input_path = Path(args.input)
     output_path = Path(args.output)
@@ -1132,6 +1868,105 @@ def _test_associations(args: argparse.Namespace) -> None:
     )
 
 
+def _test_input_data(args: argparse.Namespace) -> None:
+    processed_input_path = Path(args.processed_input)
+    train_validation_input_path = Path(args.train_validation_input)
+    test_input_path = Path(args.test_input)
+    folds_dir = Path(args.folds_dir)
+    output_path = Path(args.output)
+    result = test_input_data(
+        processed_records=_read_records(processed_input_path),
+        train_validation_records=_read_records(train_validation_input_path),
+        test_records=_read_records(test_input_path),
+        folds=_read_input_data_folds(folds_dir),
+        config=InputDataTestConfig(
+            required_fields=tuple(args.required_fields),
+            protected_fields=tuple(args.protected_fields),
+            critical_fields=tuple(args.critical_fields),
+            coverage_fields=tuple(args.coverage_fields),
+            group_field=str(args.group_field),
+            stratify_field=str(args.stratify_field),
+            expected_shops=tuple(args.expected_shops),
+            expected_currencies=tuple(args.expected_currencies),
+            max_coverage_missing_rate=float(args.max_coverage_missing_rate),
+            max_split_distribution_delta=float(args.max_split_distribution_delta),
+        ),
+    )
+    report = {
+        **result.report,
+        "inputs": {
+            "processed": str(processed_input_path),
+            "train_validation": str(train_validation_input_path),
+            "test": str(test_input_path),
+            "folds_dir": str(folds_dir),
+        },
+        "output": str(output_path),
+    }
+    _write_json(report, output_path)
+    summary = report["summary"]
+    print(
+        json.dumps(
+            {
+                "output": str(output_path),
+                "status": report["status"],
+                "check_count": summary["check_count"],
+                "passed_count": summary["passed_count"],
+                "failed_count": summary["failed_count"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    _exit_if_report_failed(report)
+
+
+def _test_ml_model(args: argparse.Namespace) -> None:
+    model_path = Path(args.model_input)
+    validation_report_path = Path(args.validation_report_input)
+    test_report_path = Path(args.test_report_input)
+    output_path = Path(args.output)
+    result = test_association_ml_model(
+        model=_read_json_object(model_path),
+        validation_report=_read_json_object(validation_report_path),
+        test_report=_read_json_object(test_report_path),
+        config=AssociationMLModelTestConfig(
+            test_dataset_input=str(args.test_dataset_input),
+            forbidden_feature_fields=tuple(args.forbidden_feature_fields),
+            min_mean_test_confidence=float(args.min_mean_test_confidence),
+            min_mean_test_lift=float(args.min_mean_test_lift),
+            max_mean_abs_test_confidence_gap=float(args.max_mean_abs_test_confidence_gap),
+            max_validation_test_confidence_delta=float(args.max_validation_test_confidence_delta),
+            max_validation_test_lift_delta=float(args.max_validation_test_lift_delta),
+        ),
+    )
+    report = {
+        **result.report,
+        "inputs": {
+            "model": str(model_path),
+            "validation_report": str(validation_report_path),
+            "test_report": str(test_report_path),
+            "test_dataset": str(args.test_dataset_input),
+        },
+        "output": str(output_path),
+    }
+    _write_json(report, output_path)
+    summary = report["summary"]
+    print(
+        json.dumps(
+            {
+                "output": str(output_path),
+                "status": report["status"],
+                "check_count": summary["check_count"],
+                "passed_count": summary["passed_count"],
+                "failed_count": summary["failed_count"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    _exit_if_report_failed(report)
+
+
 def _read_association_validation_folds(folds_dir: Path) -> list[AssociationValidationFold]:
     if not folds_dir.exists():
         raise SystemExit(f"{folds_dir} does not exist. Run ai-test split-datasets first.")
@@ -1144,6 +1979,54 @@ def _read_association_validation_folds(folds_dir: Path) -> list[AssociationValid
             raise SystemExit(f"Missing validation file for {train_path}: {validation_path}")
         folds.append(
             AssociationValidationFold(
+                fold_index=_fold_index(fold_name),
+                train_records=_read_records(train_path),
+                validation_records=_read_records(validation_path),
+            )
+        )
+
+    if not folds:
+        raise SystemExit(f"No fold train files found in {folds_dir}.")
+    return folds
+
+
+def _read_text_classification_folds(folds_dir: Path) -> list[TextClassificationValidationFold]:
+    if not folds_dir.exists():
+        raise SystemExit(
+            f"{folds_dir} does not exist. Run ai-test build-classification-dataset first."
+        )
+
+    folds: list[TextClassificationValidationFold] = []
+    for train_path in sorted(folds_dir.glob("fold_*_train.json")):
+        fold_name = train_path.name.removesuffix("_train.json")
+        validation_path = folds_dir / f"{fold_name}_validation.json"
+        if not validation_path.exists():
+            raise SystemExit(f"Missing validation file for {train_path}: {validation_path}")
+        folds.append(
+            TextClassificationValidationFold(
+                fold_index=_fold_index(fold_name),
+                train_records=_read_records(train_path),
+                validation_records=_read_records(validation_path),
+            )
+        )
+
+    if not folds:
+        raise SystemExit(f"No fold train files found in {folds_dir}.")
+    return folds
+
+
+def _read_input_data_folds(folds_dir: Path) -> list[InputDataFold]:
+    if not folds_dir.exists():
+        raise SystemExit(f"{folds_dir} does not exist. Run ai-test split-datasets first.")
+
+    folds: list[InputDataFold] = []
+    for train_path in sorted(folds_dir.glob("fold_*_train.json")):
+        fold_name = train_path.name.removesuffix("_train.json")
+        validation_path = folds_dir / f"{fold_name}_validation.json"
+        if not validation_path.exists():
+            raise SystemExit(f"Missing validation file for {train_path}: {validation_path}")
+        folds.append(
+            InputDataFold(
                 fold_index=_fold_index(fold_name),
                 train_records=_read_records(train_path),
                 validation_records=_read_records(validation_path),
@@ -1179,6 +2062,11 @@ def _read_json_object(input_path: Path) -> dict[str, object]:
 def _write_json(payload: object, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _exit_if_report_failed(report: Mapping[str, object]) -> None:
+    if report.get("status") == "failed":
+        raise SystemExit(1)
 
 
 def _resolve_cookies(cookies: str | None, cookies_file: str | None, env_name: str) -> str:

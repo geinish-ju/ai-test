@@ -177,6 +177,27 @@
     "random_seed": 42
   },
 
+  "classification_preprocessing": {
+    "category_classifier": {
+      // Source split artifacts produced by ai-test split-datasets.
+      "processed_input": "data/processed/grocery_order_items.json",
+      "train_validation_input": "data/splits/train_validation.json",
+      "test_input": "data/splits/test.json",
+      "folds_dir": "data/splits/folds",
+
+      // Classification-specific derived datasets.
+      "output_dir": "data/classification/category",
+
+      // Supervised target label and text features. Do not include target/category fields in text.
+      "target_field": "main_category",
+      "text_fields": ["product_name", "brand"],
+      "metadata_fields": ["basket_id", "shop", "order_date"],
+
+      // Drop rare labels so validation/test metrics are meaningful.
+      "min_label_count": 20
+    }
+  },
+
   "model_training": {
     "association_rules": {
       // Training data only. The hold-out test dataset must remain untouched for final testing.
@@ -206,6 +227,23 @@
       // Limit exported artifact size while keeping the strongest rules.
       "max_rules": 100,
       "max_itemsets": 500
+    },
+
+    "category_classifier": {
+      // Supervised classification training data produced by build-classification-dataset.
+      "input": "data/classification/category/train_validation.json",
+
+      // Local model artifact. Ignored by git because it is derived from local data.
+      "output": "data/models/category_classifier.json",
+
+      // Text and label fields in the classification dataset.
+      "text_field": "text",
+      "label_field": "label",
+
+      // Multinomial Naive Bayes smoothing and tokenization parameters.
+      "alpha": 1.0,
+      "min_token_length": 2,
+      "max_vocabulary_size": 5000
     }
   },
 
@@ -229,6 +267,24 @@
 
       // Number of strongest validation rules stored per fold.
       "top_rules": 20
+    },
+
+    "category_classifier": {
+      // K-fold classification files produced by build-classification-dataset.
+      "folds_dir": "data/classification/category/folds",
+
+      // Validation report with fold metrics.
+      "output": "data/validation/category_classifier_validation_report.json",
+
+      // Use the same text classifier parameters as training unless overridden.
+      "text_field": "text",
+      "label_field": "label",
+      "alpha": 1.0,
+      "min_token_length": 2,
+      "max_vocabulary_size": 5000,
+
+      // Number of largest actual-vs-predicted confusions stored per fold.
+      "top_confusions": 20
     }
   },
 
@@ -253,6 +309,139 @@
 
       // Number of strongest test rules stored in the report.
       "top_rules": 20
+    },
+
+    "category_classifier": {
+      // Trained supervised classifier produced by train-category-classifier.
+      "model_input": "data/models/category_classifier.json",
+
+      // Final hold-out classification dataset.
+      "test_input": "data/classification/category/test.json",
+
+      // Final supervised classification test report.
+      "output": "data/testing/category_classifier_test_report.json",
+
+      // Classification dataset fields and report size.
+      "text_field": "text",
+      "label_field": "label",
+      "top_confusions": 20
+    }
+  },
+
+  "input_data_testing": {
+    // Artifacts produced by preprocessing and splitting.
+    "processed_input": "data/processed/grocery_order_items.json",
+    "train_validation_input": "data/splits/train_validation.json",
+    "test_input": "data/splits/test.json",
+    "folds_dir": "data/splits/folds",
+
+    // Input data test evidence.
+    "output": "data/testing/input_data_test_report.json",
+
+    // Fields that must exist in every processed record.
+    "required_fields": [
+      "shop",
+      "order_date",
+      "product_name",
+      "brand",
+      "main_category",
+      "category",
+      "is_gluten_free",
+      "product_group",
+      "meat_type",
+      "quality_level",
+      "quantity_ordered",
+      "unit",
+      "package_quantity",
+      "package_unit",
+      "price_unit",
+      "price_per_unit",
+      "price_per_unit_unit",
+      "currency",
+      "basket_id",
+      "order_month",
+      "order_week_of_year",
+      "order_day_of_week",
+      "order_is_weekend",
+      "order_quarter"
+    ],
+
+    // Fields that must be non-missing.
+    "critical_fields": [
+      "shop",
+      "order_date",
+      "product_name",
+      "quantity_ordered",
+      "currency",
+      "basket_id"
+    ],
+
+    // Fields where partial coverage is acceptable but monitored.
+    "coverage_fields": [
+      "brand",
+      "main_category",
+      "category",
+      "product_group"
+    ],
+
+    // Technical/raw fields that must not reach model-ready datasets.
+    "protected_fields": [
+      "order_id",
+      "order_number",
+      "order_item_id",
+      "product_id",
+      "product_slug",
+      "product_url",
+      "main_category_id",
+      "category_id",
+      "category_ids",
+      "order_created_at",
+      "quantity",
+      "quantity_delivered",
+      "price_total",
+      "category_path",
+      "product_enriched"
+    ],
+
+    // Split and domain checks.
+    "group_field": "basket_id",
+    "stratify_field": "shop",
+    "expected_shops": ["kosik", "rohlik"],
+    "expected_currencies": ["CZK"],
+    "max_coverage_missing_rate": 0.4,
+    "max_split_distribution_delta": 0.2
+  },
+
+  "ml_model_testing": {
+    "association_rules": {
+      // Existing model and reports used as test evidence.
+      "model_input": "data/models/association_rules.json",
+      "validation_report_input": "data/validation/association_validation_report.json",
+      "test_report_input": "data/testing/association_test_report.json",
+      "test_dataset_input": "data/splits/test.json",
+
+      // ML model acceptance report.
+      "output": "data/testing/ml_model_test_report.json",
+
+      // The model must not train on identifiers or leakage-prone technical fields.
+      "forbidden_feature_fields": [
+        "order_id",
+        "order_number",
+        "order_item_id",
+        "product_id",
+        "product_slug",
+        "product_url",
+        "main_category_id",
+        "category_id",
+        "category_ids"
+      ],
+
+      // Acceptance thresholds for the current association model.
+      "min_mean_test_confidence": 0.2,
+      "min_mean_test_lift": 1.0,
+      "max_mean_abs_test_confidence_gap": 0.2,
+      "max_validation_test_confidence_delta": 0.15,
+      "max_validation_test_lift_delta": 0.25
     }
   }
 }

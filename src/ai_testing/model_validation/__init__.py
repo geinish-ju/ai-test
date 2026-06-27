@@ -7,6 +7,15 @@ from ai_testing.model_validation.association import (
     evaluate_association_rules_on_records,
     validate_association_rules,
 )
+from ai_testing.model_validation.text_classifier import (
+    TextClassificationEvaluationConfig,
+    TextClassificationEvaluationResult,
+    TextClassificationValidationConfig,
+    TextClassificationValidationFold,
+    TextClassificationValidationResult,
+    evaluate_text_classifier,
+    validate_text_classifier,
+)
 
 __all__ = [
     "AssociationEvaluationConfig",
@@ -14,6 +23,13 @@ __all__ = [
     "AssociationValidationConfig",
     "AssociationValidationFold",
     "AssociationValidationResult",
+    "TextClassificationEvaluationConfig",
+    "TextClassificationEvaluationResult",
+    "TextClassificationValidationConfig",
+    "TextClassificationValidationFold",
+    "TextClassificationValidationResult",
     "evaluate_association_rules_on_records",
+    "evaluate_text_classifier",
     "validate_association_rules",
+    "validate_text_classifier",
 ]
