@@ -1,4 +1,4 @@
-# AI Grocery Testing Framework
+# AI Grocery Testing
 
 Python project for preparing grocery order data for AI testing practice.
 
