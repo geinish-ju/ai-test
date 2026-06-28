@@ -19,5 +19,8 @@ data/classification/
 data/models/
 data/validation/
 data/testing/
+data/explainability/
+data/runs/
+data/reports/
 secrets/
 *.log

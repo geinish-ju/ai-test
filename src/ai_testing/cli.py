@@ -36,12 +36,21 @@ from ai_testing.data_preprocessing import (
     preprocess_grocery_records,
 )
 from ai_testing.data_splitting import DatasetSplitConfig, split_dataset_records
+from ai_testing.drift_testing import RunDriftTestConfig, test_run_drift
 from ai_testing.input_data_testing import InputDataFold, InputDataTestConfig, test_input_data
+from ai_testing.llm_exploratory_testing import (
+    LLMExploratoryTestingConfig,
+    create_llm_exploratory_test_plan,
+)
 from ai_testing.ml_model_testing import (
     AssociationMLModelTestConfig,
     TextClassifierMLModelTestConfig,
     test_association_ml_model,
     test_text_classifier_ml_model,
+)
+from ai_testing.model_explainability import (
+    TextClassifierExplainabilityConfig,
+    explain_text_classifier,
 )
 from ai_testing.model_testing import (
     AssociationTestConfig,
@@ -65,6 +74,23 @@ from ai_testing.model_validation import (
     validate_text_classifier,
 )
 from ai_testing.project_quality import aggregate_quality_reports
+from ai_testing.reporting import (
+    MarkdownReportConfig,
+    RunMarkdownReportConfig,
+    build_markdown_report,
+    build_run_markdown_report,
+)
+from ai_testing.run_tracking import (
+    RunTrackingConfig,
+    StageExecutionTrackingConfig,
+    build_run_report,
+    build_stage_history_markdown,
+    build_stage_metric_history_markdown,
+    compact_run_history,
+    latest_run_report_path,
+    record_stage_execution,
+    update_run_index,
+)
 from ai_testing.sample_data import sample_grocery_order_item_records
 
 
@@ -113,6 +139,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "category_classifier",
     )
     project_quality_config = config_section(app_config, "project_quality")
+    run_tracking_config = config_section(app_config, "run_tracking")
+    drift_testing_config = config_section(app_config, "drift_testing")
+    reporting_config = config_section(app_config, "reporting", "run_markdown")
+    markdown_reports_config = config_section(app_config, "reporting", "markdown_reports")
+    explainability_config = config_section(app_config, "explainability", "category_classifier")
+    llm_exploratory_config = config_section(app_config, "llm_exploratory_testing")
     default_include_raw = config_bool(acquisition_config, "include_raw", False)
     default_product_enrichment = config_bool(acquisition_config, "product_enrichment", True)
     kosik_product_enrichment = config_bool(
@@ -134,6 +166,66 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Path to JSON or JSONC config file. "
             "Defaults to AI_TEST_CONFIG or config/defaults.jsonc."
         ),
+    )
+    parser.add_argument(
+        "--stage-tracking",
+        action=argparse.BooleanOptionalAction,
+        default=config_bool(run_tracking_config, "stage_tracking_enabled", True),
+        dest="stage_tracking_enabled",
+        help="Record this command in the per-stage execution history",
+    )
+    parser.add_argument(
+        "--stage-history-output",
+        default=config_str(
+            run_tracking_config,
+            "stage_history_output",
+            "data/runs/stage_history.json",
+        ),
+        help="Path to the per-stage execution history JSON",
+    )
+    parser.add_argument(
+        "--stage-history-markdown-output",
+        default=config_str(
+            run_tracking_config,
+            "stage_history_markdown_output",
+            "data/reports/stage_history.md",
+        ),
+        help="Path to the per-stage execution history Markdown report",
+    )
+    parser.add_argument(
+        "--stage-metric-history-markdown-output",
+        default=config_str(
+            run_tracking_config,
+            "stage_metric_history_markdown_output",
+            "data/reports/stage_metric_history.md",
+        ),
+        help="Path to the per-stage metric history matrix Markdown report",
+    )
+    parser.add_argument(
+        "--stage-history-max-entries",
+        type=int,
+        default=config_int(run_tracking_config, "stage_history_max_entries", 500),
+        help="Maximum number of stage executions kept in history",
+    )
+    parser.add_argument(
+        "--stage-history-recent-entries-per-stage",
+        type=int,
+        default=config_int(
+            run_tracking_config,
+            "stage_history_recent_entries_per_stage",
+            5,
+        ),
+        help="Recent executions per stage shown in the Markdown history report",
+    )
+    parser.add_argument(
+        "--stage-metric-history-recent-entries-per-stage",
+        type=int,
+        default=config_int(
+            run_tracking_config,
+            "stage_metric_history_recent_entries_per_stage",
+            10,
+        ),
+        help="Recent executions per stage shown in the metric history matrix report",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -1215,16 +1307,330 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         help="Path to write project quality report JSON",
     )
+    project_quality_parser.add_argument(
+        "--drift-report",
+        default=config_str(project_quality_config, "drift_report", ""),
+        help="Optional drift quality report JSON to include in project gates",
+    )
+
+    track_run_parser = subparsers.add_parser(
+        "track-run",
+        help="Record a versioned run report from current datasets, models, and stage reports",
+    )
+    track_run_parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Optional stable run id. Defaults to a UTC timestamp.",
+    )
+    track_run_parser.add_argument(
+        "--run-name",
+        default=None,
+        help="Optional human-readable run name.",
+    )
+    track_run_parser.add_argument(
+        "--runs-dir",
+        default=config_str(run_tracking_config, "runs_dir", "data/runs"),
+        help="Directory where versioned run reports are written",
+    )
+    track_run_parser.add_argument(
+        "--index-output",
+        default=config_str(run_tracking_config, "index_output", "data/runs/run_index.json"),
+        help="Path to the run history index JSON",
+    )
+    track_run_parser.add_argument(
+        "--output",
+        default=None,
+        help="Optional explicit run report output path",
+    )
+    track_run_parser.add_argument(
+        "--baseline-run-report",
+        default=config_str(run_tracking_config, "baseline_run_report", ""),
+        help="Optional baseline run report used for metric deltas and drift checks",
+    )
+    track_run_parser.add_argument(
+        "--compare-to-latest",
+        action=argparse.BooleanOptionalAction,
+        default=config_bool(run_tracking_config, "compare_to_latest", True),
+        help="Compare this run to the latest run in the run index when no baseline is provided",
+    )
+    track_run_parser.set_defaults(
+        stage_report_paths=_run_tracking_stage_report_paths(run_tracking_config),
+        artifact_paths=_run_tracking_artifact_paths(run_tracking_config),
+    )
+
+    run_history_parser = subparsers.add_parser(
+        "run-history",
+        help="Show compact history of recorded pipeline runs",
+    )
+    run_history_parser.add_argument(
+        "--index-output",
+        default=config_str(run_tracking_config, "index_output", "data/runs/run_index.json"),
+        help="Path to the run history index JSON",
+    )
+    run_history_parser.add_argument(
+        "--limit",
+        type=int,
+        default=config_int(run_tracking_config, "history_limit", 10),
+        help="Maximum number of recent runs to print",
+    )
+
+    drift_test_parser = subparsers.add_parser(
+        "test-drift",
+        help="Test run-to-baseline data drift and metric regressions",
+    )
+    drift_test_parser.add_argument(
+        "--run-report-input",
+        default=config_str(
+            drift_testing_config,
+            "run_report_input",
+            "data/runs/run_index.json",
+        ),
+        help="Path to a run report JSON, or run index JSON when --use-latest-run is enabled",
+    )
+    drift_test_parser.add_argument(
+        "--use-latest-run",
+        action=argparse.BooleanOptionalAction,
+        default=config_bool(drift_testing_config, "use_latest_run", True),
+        help="Resolve --run-report-input as a run index and test its latest run report",
+    )
+    drift_test_parser.add_argument(
+        "--output",
+        default=config_str(
+            drift_testing_config,
+            "output",
+            "data/testing/drift_test_report.json",
+        ),
+        help="Path to write drift quality report JSON",
+    )
+    drift_test_parser.add_argument(
+        "--require-baseline",
+        action=argparse.BooleanOptionalAction,
+        default=config_bool(drift_testing_config, "require_baseline", True),
+        help="Fail when the run report has no baseline comparison",
+    )
+    drift_test_parser.add_argument(
+        "--max-regressed-metric-count",
+        type=int,
+        default=config_int(drift_testing_config, "max_regressed_metric_count", 0),
+        help="Maximum accepted number of regressed metrics",
+    )
+    drift_test_parser.add_argument(
+        "--max-total-variation-distance",
+        type=float,
+        default=config_float(drift_testing_config, "max_total_variation_distance", 0.1),
+        help="Maximum accepted overall total variation distance",
+    )
+    drift_test_parser.add_argument(
+        "--max-distribution-total-variation-distance",
+        type=float,
+        default=config_float(
+            drift_testing_config,
+            "max_distribution_total_variation_distance",
+            0.15,
+        ),
+        help="Maximum accepted total variation distance per monitored distribution",
+    )
+    drift_test_parser.add_argument(
+        "--max-critical-metric-regression",
+        type=float,
+        default=config_float(drift_testing_config, "max_critical_metric_regression", 0.02),
+        help="Maximum accepted absolute regression for critical metrics",
+    )
+    drift_test_parser.set_defaults(
+        critical_metrics=config_str_tuple(
+            drift_testing_config,
+            "critical_metrics",
+            RunDriftTestConfig().critical_metrics,
+        )
+    )
+
+    run_markdown_parser = subparsers.add_parser(
+        "generate-run-report",
+        help="Generate a human-readable Markdown report for a tracked run",
+    )
+    run_markdown_parser.add_argument(
+        "--run-report-input",
+        default=config_str(
+            reporting_config,
+            "run_report_input",
+            "data/runs/run_index.json",
+        ),
+        help="Path to a run report JSON, or run index JSON when --use-latest-run is enabled",
+    )
+    run_markdown_parser.add_argument(
+        "--use-latest-run",
+        action=argparse.BooleanOptionalAction,
+        default=config_bool(reporting_config, "use_latest_run", True),
+        help="Resolve --run-report-input as a run index and render its latest run report",
+    )
+    run_markdown_parser.add_argument(
+        "--drift-report-input",
+        default=config_str(
+            reporting_config,
+            "drift_report_input",
+            "data/testing/drift_test_report.json",
+        ),
+        help="Optional drift quality report JSON included in the Markdown report",
+    )
+    run_markdown_parser.add_argument(
+        "--output",
+        default=config_str(
+            reporting_config,
+            "output",
+            "data/reports/latest_run_report.md",
+        ),
+        help="Path to write Markdown run report",
+    )
+    run_markdown_parser.add_argument(
+        "--max-metric-deltas",
+        type=int,
+        default=config_int(reporting_config, "max_metric_deltas", 15),
+        help="Maximum number of metric changes to show",
+    )
+    run_markdown_parser.add_argument(
+        "--max-drift-distributions",
+        type=int,
+        default=config_int(reporting_config, "max_drift_distributions", 5),
+        help="Maximum number of drift distributions to show",
+    )
+    run_markdown_parser.add_argument(
+        "--max-artifacts",
+        type=int,
+        default=config_int(reporting_config, "max_artifacts", 12),
+        help="Maximum number of artifact hashes to show",
+    )
+
+    markdown_reports_parser = subparsers.add_parser(
+        "generate-markdown-reports",
+        help="Generate human-readable Markdown files for known JSON reports",
+    )
+    markdown_reports_parser.add_argument(
+        "--output-dir",
+        default=config_str(markdown_reports_config, "output_dir", "data/reports"),
+        help="Directory where Markdown report files are written",
+    )
+    markdown_reports_parser.add_argument(
+        "--report",
+        action="append",
+        default=None,
+        metavar="NAME=PATH",
+        help="Report JSON to render. Can be passed multiple times and overrides config list.",
+    )
+    markdown_reports_parser.add_argument(
+        "--max-checks",
+        type=int,
+        default=config_int(markdown_reports_config, "max_checks", 100),
+        help="Maximum number of checks rendered per report",
+    )
+    markdown_reports_parser.add_argument(
+        "--max-rows",
+        type=int,
+        default=config_int(markdown_reports_config, "max_rows", 30),
+        help="Maximum number of rows rendered for long report tables",
+    )
+    markdown_reports_parser.add_argument(
+        "--include-run-report",
+        action=argparse.BooleanOptionalAction,
+        default=config_bool(markdown_reports_config, "include_run_report", True),
+        help="Also render the latest tracked run report using the specialized run renderer",
+    )
+    markdown_reports_parser.set_defaults(
+        report_paths=_markdown_report_paths(markdown_reports_config),
+        run_report_input=config_str(
+            markdown_reports_config,
+            "run_report_input",
+            "data/runs/run_index.json",
+        ),
+        drift_report_input=config_str(
+            markdown_reports_config,
+            "drift_report_input",
+            "data/testing/drift_test_report.json",
+        ),
+        use_latest_run=config_bool(markdown_reports_config, "use_latest_run", True),
+    )
+
+    explain_classifier_parser = subparsers.add_parser(
+        "explain-category-classifier",
+        help="Generate a simple explainability report for the supervised category classifier",
+    )
+    explain_classifier_parser.add_argument(
+        "--model-input",
+        default=config_str(
+            explainability_config,
+            "model_input",
+            "data/models/category_classifier.json",
+        ),
+        help="Path to category classifier model JSON",
+    )
+    explain_classifier_parser.add_argument(
+        "--output",
+        default=config_str(
+            explainability_config,
+            "output",
+            "data/explainability/category_classifier_explanation_report.json",
+        ),
+        help="Path to write category classifier explainability report JSON",
+    )
+    explain_classifier_parser.add_argument(
+        "--top-features-per-class",
+        type=int,
+        default=config_int(explainability_config, "top_features_per_class", 20),
+        help="Number of top tokens to report per class",
+    )
+
+    llm_exploratory_parser = subparsers.add_parser(
+        "create-llm-exploratory-plan",
+        help="Create exploratory testing charters for an LLM-based feature",
+    )
+    llm_exploratory_parser.add_argument(
+        "--target-model-name",
+        default=config_str(llm_exploratory_config, "target_model_name", "not configured"),
+        help="LLM or system under exploratory testing",
+    )
+    llm_exploratory_parser.add_argument(
+        "--domain",
+        default=config_str(llm_exploratory_config, "domain", "grocery AI assistant"),
+        help="Business domain for exploratory testing charters",
+    )
+    llm_exploratory_parser.add_argument(
+        "--session-duration-minutes",
+        type=int,
+        default=config_int(llm_exploratory_config, "session_duration_minutes", 45),
+        help="Recommended session length for each exploratory run",
+    )
+    llm_exploratory_parser.add_argument(
+        "--output",
+        default=config_str(
+            llm_exploratory_config,
+            "output",
+            "data/testing/llm_exploratory_test_plan.json",
+        ),
+        help="Path to write LLM exploratory testing plan JSON",
+    )
 
     args = parser.parse_args(parser_argv)
     if args.command == "export-kosik":
         records = _fetch_kosik(args)
-        _write_records(records, Path(args.output))
+        output_path = Path(args.output)
+        _write_records(records, output_path)
+        _record_stage_result(
+            args,
+            stage_name="data_acquisition.kosik",
+            artifacts={"output": output_path},
+            payload={"summary": {"record_count": len(records)}},
+        )
         return 0
 
     if args.command == "export-rohlik":
         records = _fetch_rohlik(args)
-        _write_records(records, Path(args.output))
+        output_path = Path(args.output)
+        _write_records(records, output_path)
+        _record_stage_result(
+            args,
+            stage_name="data_acquisition.rohlik",
+            artifacts={"output": output_path},
+            payload={"summary": {"record_count": len(records)}},
+        )
         return 0
 
     if args.command == "export-all":
@@ -1265,11 +1671,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             ),
         ]
-        _write_records(records, Path(args.output))
+        output_path = Path(args.output)
+        _write_records(records, output_path)
+        _record_stage_result(
+            args,
+            stage_name="data_acquisition.all",
+            artifacts={"output": output_path},
+            payload={"summary": {"record_count": len(records)}},
+        )
         return 0
 
     if args.command == "export-sample":
-        _write_records(sample_grocery_order_item_records(), Path(args.output))
+        records = sample_grocery_order_item_records()
+        output_path = Path(args.output)
+        _write_records(records, output_path)
+        _record_stage_result(
+            args,
+            stage_name="data_acquisition.sample",
+            artifacts={"output": output_path},
+            payload={"summary": {"record_count": len(records)}},
+        )
         return 0
 
     if args.command == "preprocess-data":
@@ -1322,6 +1743,34 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "run-quality-gates":
         _run_quality_gates(args)
+        return 0
+
+    if args.command == "track-run":
+        _track_run(args)
+        return 0
+
+    if args.command == "run-history":
+        _run_history(args)
+        return 0
+
+    if args.command == "test-drift":
+        _test_drift(args)
+        return 0
+
+    if args.command == "generate-run-report":
+        _generate_run_report(args)
+        return 0
+
+    if args.command == "generate-markdown-reports":
+        _generate_markdown_reports(args)
+        return 0
+
+    if args.command == "explain-category-classifier":
+        _explain_category_classifier(args)
+        return 0
+
+    if args.command == "create-llm-exploratory-plan":
+        _create_llm_exploratory_plan(args)
         return 0
 
     return 2
@@ -1445,6 +1894,311 @@ def _load_config_for_cli(config_path: str) -> dict[str, object]:
         return load_config(config_path)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         raise SystemExit(f"Cannot load config {config_path}: {error}") from error
+
+
+def _run_tracking_stage_report_paths(config: Mapping[str, object]) -> dict[str, Path]:
+    stage_reports = config_section(config, "stage_reports")
+    return {
+        "data_preprocessing": Path(
+            config_str(
+                stage_reports,
+                "data_preprocessing",
+                "data/processed/grocery_data_quality_report.json",
+            )
+        ),
+        "data_splitting": Path(
+            config_str(stage_reports, "data_splitting", "data/splits/split_manifest.json")
+        ),
+        "classification_preprocessing": Path(
+            config_str(
+                stage_reports,
+                "classification_preprocessing",
+                "data/classification/category/classification_manifest.json",
+            )
+        ),
+        "association_training": Path(
+            config_str(stage_reports, "association_training", "data/models/association_rules.json")
+        ),
+        "association_validation": Path(
+            config_str(
+                stage_reports,
+                "association_validation",
+                "data/validation/association_validation_report.json",
+            )
+        ),
+        "association_testing": Path(
+            config_str(
+                stage_reports,
+                "association_testing",
+                "data/testing/association_test_report.json",
+            )
+        ),
+        "association_model_quality": Path(
+            config_str(
+                stage_reports,
+                "association_model_quality",
+                "data/testing/ml_model_test_report.json",
+            )
+        ),
+        "category_training": Path(
+            config_str(stage_reports, "category_training", "data/models/category_classifier.json")
+        ),
+        "category_validation": Path(
+            config_str(
+                stage_reports,
+                "category_validation",
+                "data/validation/category_classifier_validation_report.json",
+            )
+        ),
+        "category_testing": Path(
+            config_str(
+                stage_reports,
+                "category_testing",
+                "data/testing/category_classifier_test_report.json",
+            )
+        ),
+        "category_model_quality": Path(
+            config_str(
+                stage_reports,
+                "category_model_quality",
+                "data/testing/category_ml_model_test_report.json",
+            )
+        ),
+        "input_data_quality": Path(
+            config_str(
+                stage_reports,
+                "input_data_quality",
+                "data/testing/input_data_test_report.json",
+            )
+        ),
+        "project_quality": Path(
+            config_str(
+                stage_reports,
+                "project_quality",
+                "data/testing/project_quality_report.json",
+            )
+        ),
+        "drift_testing": Path(
+            config_str(
+                stage_reports,
+                "drift_testing",
+                "data/testing/drift_test_report.json",
+            )
+        ),
+        "category_explainability": Path(
+            config_str(
+                stage_reports,
+                "category_explainability",
+                "data/explainability/category_classifier_explanation_report.json",
+            )
+        ),
+        "llm_exploratory_plan": Path(
+            config_str(
+                stage_reports,
+                "llm_exploratory_plan",
+                "data/testing/llm_exploratory_test_plan.json",
+            )
+        ),
+    }
+
+
+def _run_tracking_artifact_paths(config: Mapping[str, object]) -> dict[str, Path]:
+    artifacts = config_section(config, "artifacts")
+    return {
+        "raw_grocery_dataset": Path(
+            config_str(artifacts, "raw_grocery_dataset", "data/raw/grocery_order_items.json")
+        ),
+        "processed_grocery_dataset": Path(
+            config_str(
+                artifacts,
+                "processed_grocery_dataset",
+                "data/processed/grocery_order_items.json",
+            )
+        ),
+        "split_manifest": Path(
+            config_str(artifacts, "split_manifest", "data/splits/split_manifest.json")
+        ),
+        "train_validation_dataset": Path(
+            config_str(artifacts, "train_validation_dataset", "data/splits/train_validation.json")
+        ),
+        "test_dataset": Path(config_str(artifacts, "test_dataset", "data/splits/test.json")),
+        "classification_manifest": Path(
+            config_str(
+                artifacts,
+                "classification_manifest",
+                "data/classification/category/classification_manifest.json",
+            )
+        ),
+        "classification_train_validation_dataset": Path(
+            config_str(
+                artifacts,
+                "classification_train_validation_dataset",
+                "data/classification/category/train_validation.json",
+            )
+        ),
+        "classification_test_dataset": Path(
+            config_str(
+                artifacts,
+                "classification_test_dataset",
+                "data/classification/category/test.json",
+            )
+        ),
+        "association_model": Path(
+            config_str(artifacts, "association_model", "data/models/association_rules.json")
+        ),
+        "category_model": Path(
+            config_str(artifacts, "category_model", "data/models/category_classifier.json")
+        ),
+        "category_estimator": Path(
+            config_str(artifacts, "category_estimator", "data/models/category_classifier.joblib")
+        ),
+        "input_data_quality_report": Path(
+            config_str(
+                artifacts,
+                "input_data_quality_report",
+                "data/testing/input_data_test_report.json",
+            )
+        ),
+        "association_model_quality_report": Path(
+            config_str(
+                artifacts,
+                "association_model_quality_report",
+                "data/testing/ml_model_test_report.json",
+            )
+        ),
+        "category_model_quality_report": Path(
+            config_str(
+                artifacts,
+                "category_model_quality_report",
+                "data/testing/category_ml_model_test_report.json",
+            )
+        ),
+        "project_quality_report": Path(
+            config_str(
+                artifacts,
+                "project_quality_report",
+                "data/testing/project_quality_report.json",
+            )
+        ),
+        "drift_test_report": Path(
+            config_str(
+                artifacts,
+                "drift_test_report",
+                "data/testing/drift_test_report.json",
+            )
+        ),
+        "category_explainability_report": Path(
+            config_str(
+                artifacts,
+                "category_explainability_report",
+                "data/explainability/category_classifier_explanation_report.json",
+            )
+        ),
+        "llm_exploratory_test_plan": Path(
+            config_str(
+                artifacts,
+                "llm_exploratory_test_plan",
+                "data/testing/llm_exploratory_test_plan.json",
+            )
+        ),
+        "latest_markdown_run_report": Path(
+            config_str(
+                artifacts,
+                "latest_markdown_run_report",
+                "data/reports/latest_run_report.md",
+            )
+        ),
+    }
+
+
+def _markdown_report_paths(config: Mapping[str, object]) -> dict[str, Path]:
+    reports = config_section(config, "reports")
+    return {
+        "data_preprocessing": Path(
+            config_str(
+                reports,
+                "data_preprocessing",
+                "data/processed/grocery_data_quality_report.json",
+            )
+        ),
+        "association_validation": Path(
+            config_str(
+                reports,
+                "association_validation",
+                "data/validation/association_validation_report.json",
+            )
+        ),
+        "association_testing": Path(
+            config_str(
+                reports,
+                "association_testing",
+                "data/testing/association_test_report.json",
+            )
+        ),
+        "association_model_quality": Path(
+            config_str(
+                reports,
+                "association_model_quality",
+                "data/testing/ml_model_test_report.json",
+            )
+        ),
+        "category_validation": Path(
+            config_str(
+                reports,
+                "category_validation",
+                "data/validation/category_classifier_validation_report.json",
+            )
+        ),
+        "category_testing": Path(
+            config_str(
+                reports,
+                "category_testing",
+                "data/testing/category_classifier_test_report.json",
+            )
+        ),
+        "category_model_quality": Path(
+            config_str(
+                reports,
+                "category_model_quality",
+                "data/testing/category_ml_model_test_report.json",
+            )
+        ),
+        "input_data_quality": Path(
+            config_str(
+                reports,
+                "input_data_quality",
+                "data/testing/input_data_test_report.json",
+            )
+        ),
+        "drift_testing": Path(
+            config_str(
+                reports,
+                "drift_testing",
+                "data/testing/drift_test_report.json",
+            )
+        ),
+        "project_quality": Path(
+            config_str(
+                reports,
+                "project_quality",
+                "data/testing/project_quality_report.json",
+            )
+        ),
+        "category_explainability": Path(
+            config_str(
+                reports,
+                "category_explainability",
+                "data/explainability/category_classifier_explanation_report.json",
+            )
+        ),
+        "llm_exploratory_plan": Path(
+            config_str(
+                reports,
+                "llm_exploratory_plan",
+                "data/testing/llm_exploratory_test_plan.json",
+            )
+        ),
+    }
 
 
 def _add_kosik_endpoint_args(
@@ -1605,6 +2359,12 @@ def _preprocess_data(args: argparse.Namespace) -> None:
 
     _write_json(result.records, output_path)
     _write_json(result.report, report_path)
+    _record_stage_result(
+        args,
+        stage_name="data_preprocessing",
+        artifacts={"processed_dataset": output_path, "quality_report": report_path},
+        payload=result.report,
+    )
     print(
         json.dumps(
             {
@@ -1663,6 +2423,17 @@ def _split_datasets(args: argparse.Namespace) -> None:
         },
     }
     _write_json(manifest, manifest_path)
+    _record_stage_result(
+        args,
+        stage_name="data_splitting",
+        artifacts={
+            "train_validation": train_validation_path,
+            "test": test_path,
+            "manifest": manifest_path,
+            "folds_dir": folds_dir,
+        },
+        payload=manifest,
+    )
     print(
         json.dumps(
             {
@@ -1765,6 +2536,17 @@ def _build_classification_dataset(args: argparse.Namespace) -> None:
         "folds": fold_reports,
     }
     _write_json(manifest, manifest_path)
+    _record_stage_result(
+        args,
+        stage_name="classification_preprocessing",
+        artifacts={
+            "train_validation": train_validation_path,
+            "test": test_path,
+            "folds_dir": folds_output_dir,
+            "manifest": manifest_path,
+        },
+        payload=manifest,
+    )
     print(
         json.dumps(
             {
@@ -1818,6 +2600,12 @@ def _train_category_classifier(args: argparse.Namespace) -> None:
         )
     except ValueError as error:
         raise SystemExit(f"Cannot save category classifier: {error}") from error
+    _record_stage_result(
+        args,
+        stage_name="model_training.category_classifier",
+        artifacts={"model": output_path, "estimator": estimator_output_path},
+        payload=model,
+    )
     summary = model["summary"]
     print(
         json.dumps(
@@ -1864,6 +2652,12 @@ def _validate_category_classifier(args: argparse.Namespace) -> None:
         "output": str(output_path),
     }
     _write_json(report, output_path)
+    _record_stage_result(
+        args,
+        stage_name="model_validation.category_classifier",
+        artifacts={"validation_report": output_path},
+        payload=report,
+    )
     summary = report["summary"]
     print(
         json.dumps(
@@ -1912,6 +2706,12 @@ def _test_category_classifier(args: argparse.Namespace) -> None:
         "output": str(output_path),
     }
     _write_json(report, output_path)
+    _record_stage_result(
+        args,
+        stage_name="model_testing.category_classifier",
+        artifacts={"test_report": output_path},
+        payload=report,
+    )
     test_summary = report["test"]
     print(
         json.dumps(
@@ -1963,6 +2763,12 @@ def _train_associations(args: argparse.Namespace) -> None:
         "note": "Trained on the training split only. Hold-out test data is not used.",
     }
     _write_json(model, output_path)
+    _record_stage_result(
+        args,
+        stage_name="model_training.association_rules",
+        artifacts={"model": output_path},
+        payload=model,
+    )
     summary = model["summary"]
     print(
         json.dumps(
@@ -2011,6 +2817,12 @@ def _validate_associations(args: argparse.Namespace) -> None:
         "output": str(output_path),
     }
     _write_json(report, output_path)
+    _record_stage_result(
+        args,
+        stage_name="model_validation.association_rules",
+        artifacts={"validation_report": output_path},
+        payload=report,
+    )
     summary = report["summary"]
     print(
         json.dumps(
@@ -2060,6 +2872,12 @@ def _test_associations(args: argparse.Namespace) -> None:
         "output": str(output_path),
     }
     _write_json(report, output_path)
+    _record_stage_result(
+        args,
+        stage_name="model_testing.association_rules",
+        artifacts={"test_report": output_path},
+        payload=report,
+    )
     test_summary = report["test"]
     print(
         json.dumps(
@@ -2128,6 +2946,12 @@ def _test_input_data(args: argparse.Namespace) -> None:
         "output": str(output_path),
     }
     _write_json(report, output_path)
+    _record_stage_result(
+        args,
+        stage_name="input_data_testing",
+        artifacts={"input_data_report": output_path},
+        payload=report,
+    )
     _print_report_summary(report, output_path)
     _exit_if_report_failed(report)
 
@@ -2173,6 +2997,12 @@ def _test_ml_model(args: argparse.Namespace) -> None:
         "output": str(output_path),
     }
     _write_json(report, output_path)
+    _record_stage_result(
+        args,
+        stage_name="ml_model_testing.association_rules",
+        artifacts={"ml_model_report": output_path},
+        payload=report,
+    )
     _print_report_summary(report, output_path)
     _exit_if_report_failed(report)
 
@@ -2232,6 +3062,12 @@ def _test_category_ml_model(args: argparse.Namespace) -> None:
         "output": str(output_path),
     }
     _write_json(report, output_path)
+    _record_stage_result(
+        args,
+        stage_name="ml_model_testing.category_classifier",
+        artifacts={"ml_model_report": output_path},
+        payload=report,
+    )
     _print_report_summary(report, output_path)
     _exit_if_report_failed(report)
 
@@ -2241,12 +3077,19 @@ def _run_quality_gates(args: argparse.Namespace) -> None:
     association_model_report_path = Path(args.association_model_report)
     category_model_report_path = Path(args.category_model_report)
     output_path = Path(args.output)
+    reports: dict[str, Mapping[str, object]] = {
+        "input_data": _read_json_object(input_data_report_path),
+        "association_model": _read_json_object(association_model_report_path),
+        "category_model": _read_json_object(category_model_report_path),
+    }
+    drift_report_path = Path(str(args.drift_report)) if args.drift_report else None
+    if drift_report_path is not None:
+        if not drift_report_path.exists():
+            raise SystemExit(f"Drift report does not exist: {drift_report_path}")
+        reports["drift"] = _read_json_object(drift_report_path)
+
     result = aggregate_quality_reports(
-        {
-            "input_data": _read_json_object(input_data_report_path),
-            "association_model": _read_json_object(association_model_report_path),
-            "category_model": _read_json_object(category_model_report_path),
-        }
+        reports,
     )
     report = {
         **result.report,
@@ -2254,6 +3097,7 @@ def _run_quality_gates(args: argparse.Namespace) -> None:
             "input_data_report": str(input_data_report_path),
             "association_model_report": str(association_model_report_path),
             "category_model_report": str(category_model_report_path),
+            "drift_report": str(drift_report_path) if drift_report_path is not None else None,
         },
         "artifacts": {
             "input_data_report": artifact_metadata(
@@ -2271,10 +3115,21 @@ def _run_quality_gates(args: argparse.Namespace) -> None:
                 "report",
                 "category_model_report",
             ),
+            "drift_report": (
+                artifact_metadata(drift_report_path, "report", "drift_report")
+                if drift_report_path is not None
+                else {"path": None, "type": "report", "exists": False, "role": "drift_report"}
+            ),
         },
         "output": str(output_path),
     }
     _write_json(report, output_path)
+    _record_stage_result(
+        args,
+        stage_name="project_quality",
+        artifacts={"project_quality_report": output_path},
+        payload=report,
+    )
     metrics = _mapping(report.get("metrics"))
     _print_report_summary(
         report,
@@ -2285,6 +3140,423 @@ def _run_quality_gates(args: argparse.Namespace) -> None:
         },
     )
     _exit_if_report_failed(report)
+
+
+def _test_drift(args: argparse.Namespace) -> None:
+    run_report_path = _resolve_run_report_input(
+        Path(args.run_report_input),
+        bool(args.use_latest_run),
+    )
+    output_path = Path(args.output)
+    run_report = _read_json_object(run_report_path)
+    result = test_run_drift(
+        run_report,
+        config=RunDriftTestConfig(
+            require_baseline=bool(args.require_baseline),
+            max_regressed_metric_count=int(args.max_regressed_metric_count),
+            max_total_variation_distance=float(args.max_total_variation_distance),
+            max_distribution_total_variation_distance=float(
+                args.max_distribution_total_variation_distance
+            ),
+            max_critical_metric_regression=float(args.max_critical_metric_regression),
+            critical_metrics=tuple(args.critical_metrics),
+        ),
+    )
+    report = {
+        **result,
+        "inputs": {"run_report": str(run_report_path)},
+        "artifacts": {"run_report": artifact_metadata(run_report_path, "report", "run_report")},
+        "output": str(output_path),
+    }
+    _write_json(report, output_path)
+    _record_stage_result(
+        args,
+        stage_name="drift_testing",
+        artifacts={"drift_report": output_path},
+        payload=report,
+    )
+    _print_report_summary(
+        report,
+        output_path,
+        extra={
+            "run_id": report.get("run_id"),
+            "baseline_run_id": report.get("baseline_run_id"),
+            "max_total_variation_distance": _mapping(report.get("metrics")).get(
+                "max_total_variation_distance"
+            ),
+        },
+    )
+    _exit_if_report_failed(report)
+
+
+def _generate_run_report(args: argparse.Namespace) -> None:
+    run_report_path = _resolve_run_report_input(
+        Path(args.run_report_input),
+        bool(args.use_latest_run),
+    )
+    drift_report_path = Path(args.drift_report_input)
+    drift_report = _read_json_object(drift_report_path) if drift_report_path.exists() else None
+    output_path = Path(args.output)
+    markdown = build_run_markdown_report(
+        _read_json_object(run_report_path),
+        drift_report=drift_report,
+        config=RunMarkdownReportConfig(
+            max_metric_deltas=int(args.max_metric_deltas),
+            max_drift_distributions=int(args.max_drift_distributions),
+            max_artifacts=int(args.max_artifacts),
+        ),
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(markdown, encoding="utf-8")
+    _record_stage_result(
+        args,
+        stage_name="reporting.latest_run_report",
+        artifacts={"markdown_report": output_path, "run_report": run_report_path},
+        payload={"summary": {"generated_report_count": 1}},
+    )
+    print(
+        json.dumps(
+            {
+                "output": str(output_path),
+                "run_report_input": str(run_report_path),
+                "drift_report_input": str(drift_report_path) if drift_report is not None else None,
+                "format": "markdown",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def _generate_markdown_reports(args: argparse.Namespace) -> None:
+    output_dir = Path(args.output_dir)
+    report_paths = (
+        _parse_report_specs(tuple(args.report)) if args.report else _path_mapping(args.report_paths)
+    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    generated: list[dict[str, object]] = []
+    skipped: list[dict[str, object]] = []
+    markdown_config = MarkdownReportConfig(
+        max_checks=int(args.max_checks),
+        max_rows=int(args.max_rows),
+    )
+
+    for name, report_path in sorted(report_paths.items()):
+        output_path = output_dir / f"{_safe_filename(name)}.md"
+        if not report_path.exists():
+            skipped.append({"name": name, "input": str(report_path), "reason": "missing"})
+            continue
+        markdown = build_markdown_report(
+            _read_json_object(report_path),
+            title=_markdown_title(name),
+            source_path=report_path,
+            config=markdown_config,
+        )
+        output_path.write_text(markdown, encoding="utf-8")
+        generated.append({"name": name, "input": str(report_path), "output": str(output_path)})
+
+    if args.include_run_report:
+        run_output_path = output_dir / "latest_run_report.md"
+        try:
+            run_report_path = _resolve_run_report_input(
+                Path(args.run_report_input),
+                bool(args.use_latest_run),
+            )
+        except SystemExit:
+            skipped.append(
+                {
+                    "name": "latest_run_report",
+                    "input": str(args.run_report_input),
+                    "reason": "missing_latest_run",
+                }
+            )
+        else:
+            drift_report_path = Path(args.drift_report_input)
+            drift_report = (
+                _read_json_object(drift_report_path) if drift_report_path.exists() else None
+            )
+            run_markdown = build_run_markdown_report(
+                _read_json_object(run_report_path),
+                drift_report=drift_report,
+            )
+            run_output_path.write_text(run_markdown, encoding="utf-8")
+            generated.append(
+                {
+                    "name": "latest_run_report",
+                    "input": str(run_report_path),
+                    "output": str(run_output_path),
+                }
+            )
+
+    stage_history_path = Path(str(args.stage_history_output))
+    stage_history_output_path = output_dir / "stage_history.md"
+    stage_metric_history_output_path = output_dir / "stage_metric_history.md"
+    if stage_history_path.exists():
+        stage_history = _read_json_object(stage_history_path)
+        stage_history_output_path.write_text(
+            build_stage_history_markdown(
+                stage_history,
+                recent_entries_per_stage=int(args.stage_history_recent_entries_per_stage),
+            ),
+            encoding="utf-8",
+        )
+        stage_metric_history_output_path.write_text(
+            build_stage_metric_history_markdown(
+                stage_history,
+                recent_entries_per_stage=int(args.stage_metric_history_recent_entries_per_stage),
+            ),
+            encoding="utf-8",
+        )
+        generated.append(
+            {
+                "name": "stage_history",
+                "input": str(stage_history_path),
+                "output": str(stage_history_output_path),
+            }
+        )
+        generated.append(
+            {
+                "name": "stage_metric_history",
+                "input": str(stage_history_path),
+                "output": str(stage_metric_history_output_path),
+            }
+        )
+    else:
+        skipped.append(
+            {
+                "name": "stage_history",
+                "input": str(stage_history_path),
+                "reason": "missing",
+            }
+        )
+        skipped.append(
+            {
+                "name": "stage_metric_history",
+                "input": str(stage_history_path),
+                "reason": "missing",
+            }
+        )
+
+    _record_stage_result(
+        args,
+        stage_name="reporting.markdown_reports",
+        artifacts={"output_dir": output_dir},
+        payload={
+            "summary": {
+                "generated_report_count": len(generated),
+                "skipped_report_count": len(skipped),
+            }
+        },
+    )
+    print(
+        json.dumps(
+            {
+                "output_dir": str(output_dir),
+                "generated_count": len(generated),
+                "skipped_count": len(skipped),
+                "generated": generated,
+                "skipped": skipped,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def _track_run(args: argparse.Namespace) -> None:
+    runs_dir = Path(args.runs_dir)
+    index_output_path = Path(args.index_output)
+    baseline_report = _baseline_run_report(
+        explicit_baseline=str(args.baseline_run_report or ""),
+        compare_to_latest=bool(args.compare_to_latest),
+        index_output_path=index_output_path,
+    )
+    config = RunTrackingConfig(
+        runs_dir=runs_dir,
+        index_output=index_output_path,
+        stage_report_paths=_path_mapping(args.stage_report_paths),
+        artifact_paths=_path_mapping(args.artifact_paths),
+    )
+    report = build_run_report(
+        config,
+        run_id=str(args.run_id) if args.run_id else None,
+        run_name=str(args.run_name) if args.run_name else None,
+        baseline_report=baseline_report,
+    )
+    run_id = str(report["run_id"])
+    output_path = Path(args.output) if args.output else runs_dir / run_id / "run_report.json"
+    markdown_output_path = output_path.with_suffix(".md")
+    _write_json(report, output_path)
+    markdown_output_path.write_text(build_run_markdown_report(report), encoding="utf-8")
+    index = update_run_index(index_output_path, report, output_path)
+    _record_stage_result(
+        args,
+        stage_name="run_tracking",
+        artifacts={
+            "run_report": output_path,
+            "run_report_markdown": markdown_output_path,
+            "run_index": index_output_path,
+        },
+        payload=report,
+    )
+    comparison = _mapping(report.get("comparison"))
+    delta_summary = _mapping(comparison.get("metric_delta_summary"))
+    summary = _mapping(report.get("summary"))
+    print(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "output": str(output_path),
+                "index_output": str(index_output_path),
+                "run_count": index.get("run_count"),
+                "quality_status": summary.get("quality_status"),
+                "available_stage_report_count": summary.get("available_stage_report_count"),
+                "available_artifact_count": summary.get("available_artifact_count"),
+                "metric_count": summary.get("metric_count"),
+                "comparison_status": comparison.get("status"),
+                "baseline_run_id": comparison.get("baseline_run_id"),
+                "improved_metric_count": delta_summary.get("improved_metric_count"),
+                "regressed_metric_count": delta_summary.get("regressed_metric_count"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def _run_history(args: argparse.Namespace) -> None:
+    history = compact_run_history(Path(args.index_output), limit=int(args.limit))
+    print(json.dumps(history, ensure_ascii=False, indent=2))
+
+
+def _explain_category_classifier(args: argparse.Namespace) -> None:
+    model_path = Path(args.model_input)
+    output_path = Path(args.output)
+    try:
+        report = explain_text_classifier(
+            _read_json_object(model_path),
+            config=TextClassifierExplainabilityConfig(
+                top_features_per_class=int(args.top_features_per_class)
+            ),
+        )
+    except ValueError as error:
+        raise SystemExit(f"Cannot explain category classifier: {error}") from error
+    report = {
+        **report,
+        "inputs": {"model": str(model_path)},
+        "artifacts": {"model": artifact_metadata(model_path, "model", "model_input")},
+        "output": str(output_path),
+    }
+    _write_json(report, output_path)
+    _record_stage_result(
+        args,
+        stage_name="model_explainability.category_classifier",
+        artifacts={"explainability_report": output_path},
+        payload=report,
+    )
+    summary = _mapping(report.get("summary"))
+    print(
+        json.dumps(
+            {
+                "output": str(output_path),
+                "class_count": summary.get("class_count"),
+                "feature_count": summary.get("feature_count"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def _create_llm_exploratory_plan(args: argparse.Namespace) -> None:
+    output_path = Path(args.output)
+    try:
+        report = create_llm_exploratory_test_plan(
+            LLMExploratoryTestingConfig(
+                target_model_name=str(args.target_model_name),
+                domain=str(args.domain),
+                session_duration_minutes=int(args.session_duration_minutes),
+            )
+        )
+    except ValueError as error:
+        raise SystemExit(f"Cannot create LLM exploratory plan: {error}") from error
+    report = {**report, "output": str(output_path)}
+    _write_json(report, output_path)
+    _record_stage_result(
+        args,
+        stage_name="llm_exploratory_testing",
+        artifacts={"llm_exploratory_plan": output_path},
+        payload=report,
+    )
+    summary = _mapping(report.get("summary"))
+    print(
+        json.dumps(
+            {
+                "output": str(output_path),
+                "charter_count": summary.get("charter_count"),
+                "target_model_name": report.get("subject"),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def _baseline_run_report(
+    *,
+    explicit_baseline: str,
+    compare_to_latest: bool,
+    index_output_path: Path,
+) -> Mapping[str, object] | None:
+    baseline_path = Path(explicit_baseline) if explicit_baseline else None
+    if baseline_path is None and compare_to_latest:
+        baseline_path = latest_run_report_path(index_output_path)
+    if baseline_path is None or not baseline_path.exists():
+        return None
+    return _read_json_object(baseline_path)
+
+
+def _resolve_run_report_input(input_path: Path, use_latest_run: bool) -> Path:
+    if use_latest_run:
+        latest_path = latest_run_report_path(input_path)
+        if latest_path is None:
+            raise SystemExit(f"Cannot resolve latest run report from {input_path}")
+        return latest_path
+    if not input_path.exists():
+        raise SystemExit(f"Run report does not exist: {input_path}")
+    return input_path
+
+
+def _parse_report_specs(specs: Sequence[str]) -> dict[str, Path]:
+    report_paths: dict[str, Path] = {}
+    for spec in specs:
+        if "=" not in spec:
+            raise SystemExit(f"Invalid --report value {spec!r}. Expected NAME=PATH.")
+        name, raw_path = spec.split("=", 1)
+        name = name.strip()
+        raw_path = raw_path.strip()
+        if not name or not raw_path:
+            raise SystemExit(f"Invalid --report value {spec!r}. Expected NAME=PATH.")
+        report_paths[name] = Path(raw_path)
+    return report_paths
+
+
+def _safe_filename(value: str) -> str:
+    safe = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in value)
+    return safe.strip("_") or "report"
+
+
+def _markdown_title(value: str) -> str:
+    return value.replace("_", " ").replace("-", " ").title()
+
+
+def _path_mapping(value: object) -> dict[str, Path]:
+    paths: dict[str, Path] = {}
+    for name, path in _mapping(value).items():
+        if not isinstance(name, str) or not isinstance(path, (str, Path)):
+            continue
+        paths[name] = Path(path)
+    return paths
 
 
 def _read_association_validation_folds(folds_dir: Path) -> list[AssociationValidationFold]:
@@ -2382,6 +3654,57 @@ def _read_json_object(input_path: Path) -> dict[str, object]:
 def _write_json(payload: object, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _record_stage_result(
+    args: argparse.Namespace,
+    *,
+    stage_name: str,
+    artifacts: Mapping[str, Path],
+    payload: Mapping[str, object] | None = None,
+    status: str | None = None,
+    parameters: Mapping[str, object] | None = None,
+) -> None:
+    if not bool(getattr(args, "stage_tracking_enabled", True)):
+        return
+    record_stage_execution(
+        StageExecutionTrackingConfig(
+            history_output=Path(
+                str(getattr(args, "stage_history_output", "data/runs/stage_history.json"))
+            ),
+            markdown_output=Path(
+                str(
+                    getattr(
+                        args,
+                        "stage_history_markdown_output",
+                        "data/reports/stage_history.md",
+                    )
+                )
+            ),
+            metric_history_markdown_output=Path(
+                str(
+                    getattr(
+                        args,
+                        "stage_metric_history_markdown_output",
+                        "data/reports/stage_metric_history.md",
+                    )
+                )
+            ),
+            max_entries=int(getattr(args, "stage_history_max_entries", 500)),
+            recent_entries_per_stage=int(
+                getattr(args, "stage_history_recent_entries_per_stage", 5)
+            ),
+            metric_history_recent_entries_per_stage=int(
+                getattr(args, "stage_metric_history_recent_entries_per_stage", 10)
+            ),
+        ),
+        stage_name=stage_name,
+        command_name=str(args.command),
+        artifacts=artifacts,
+        payload=payload,
+        status=status,
+        parameters=parameters,
+    )
 
 
 def _print_report_summary(

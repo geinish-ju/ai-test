@@ -35,4 +35,7 @@ jobs:
         run: ruff format --check .
 
       - name: Type check
-        run: mypy
+        run: mypy src tests
+
+      - name: Smoke tests
+        run: pytest

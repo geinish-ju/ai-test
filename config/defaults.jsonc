@@ -489,8 +489,175 @@
     "input_data_report": "data/testing/input_data_test_report.json",
     "association_model_report": "data/testing/ml_model_test_report.json",
     "category_model_report": "data/testing/category_ml_model_test_report.json",
+    "drift_report": "",
 
     // Aggregated project verdict.
     "output": "data/testing/project_quality_report.json"
+  },
+
+  "drift_testing": {
+    // By default, read the latest run from data/runs/run_index.json.
+    "run_report_input": "data/runs/run_index.json",
+    "use_latest_run": true,
+
+    // Drift quality report consumed by humans and optionally by project quality gates.
+    "output": "data/testing/drift_test_report.json",
+
+    // A run without a baseline cannot prove improvement/regression.
+    "require_baseline": true,
+
+    // Current strict policy: any regressed tracked metric should be investigated.
+    "max_regressed_metric_count": 0,
+
+    // Total variation distance thresholds for monitored label/shop distributions.
+    "max_total_variation_distance": 0.1,
+    "max_distribution_total_variation_distance": 0.15,
+
+    // Critical metrics may move only within a small tolerance before the drift check fails.
+    "max_critical_metric_regression": 0.02,
+    "critical_metrics": [
+      "category.test.accuracy",
+      "category.test.macro_f1",
+      "category.test.weighted_f1",
+      "association.test.confidence",
+      "association.test.lift",
+      "association.test.hit_rate",
+      "quality.project.failed_report_count",
+      "quality.project.total_child_failed_check_count"
+    ]
+  },
+
+  "run_tracking": {
+    // Local run registry. It stores metadata, hashes, metrics, and comparisons, not secrets.
+    "runs_dir": "data/runs",
+    "index_output": "data/runs/run_index.json",
+
+    // Record every result-producing CLI command as an execution of a concrete pipeline stage.
+    "stage_tracking_enabled": true,
+
+    // Machine-readable append-only stage execution history with current-vs-previous metric deltas.
+    "stage_history_output": "data/runs/stage_history.json",
+
+    // Human-readable Markdown copy of the stage execution history.
+    "stage_history_markdown_output": "data/reports/stage_history.md",
+
+    // Human-readable matrix report: metric rows by recent runs for every stage.
+    "stage_metric_history_markdown_output": "data/reports/stage_metric_history.md",
+
+    // Maximum number of stage executions kept in the JSON history file.
+    "stage_history_max_entries": 500,
+
+    // Number of recent executions per stage shown in the Markdown report.
+    "stage_history_recent_entries_per_stage": 5,
+
+    // Number of recent executions per stage shown as columns in the metric matrix report.
+    "stage_metric_history_recent_entries_per_stage": 10,
+
+    // Compare a new run to the latest recorded run when no explicit baseline is passed.
+    "compare_to_latest": true,
+    "baseline_run_report": "",
+    "history_limit": 10,
+
+    // Stage reports used as run evidence. Missing files are recorded as missing, not fatal.
+    "stage_reports": {
+      "data_preprocessing": "data/processed/grocery_data_quality_report.json",
+      "data_splitting": "data/splits/split_manifest.json",
+      "classification_preprocessing": "data/classification/category/classification_manifest.json",
+      "association_training": "data/models/association_rules.json",
+      "association_validation": "data/validation/association_validation_report.json",
+      "association_testing": "data/testing/association_test_report.json",
+      "association_model_quality": "data/testing/ml_model_test_report.json",
+      "category_training": "data/models/category_classifier.json",
+      "category_validation": "data/validation/category_classifier_validation_report.json",
+      "category_testing": "data/testing/category_classifier_test_report.json",
+      "category_model_quality": "data/testing/category_ml_model_test_report.json",
+      "input_data_quality": "data/testing/input_data_test_report.json",
+      "project_quality": "data/testing/project_quality_report.json",
+      "drift_testing": "data/testing/drift_test_report.json",
+      "category_explainability": "data/explainability/category_classifier_explanation_report.json",
+      "llm_exploratory_plan": "data/testing/llm_exploratory_test_plan.json"
+    },
+
+    // Datasets, models, manifests, and reports whose SHA256 hashes define the run version.
+    "artifacts": {
+      "raw_grocery_dataset": "data/raw/grocery_order_items.json",
+      "processed_grocery_dataset": "data/processed/grocery_order_items.json",
+      "split_manifest": "data/splits/split_manifest.json",
+      "train_validation_dataset": "data/splits/train_validation.json",
+      "test_dataset": "data/splits/test.json",
+      "classification_manifest": "data/classification/category/classification_manifest.json",
+      "classification_train_validation_dataset": "data/classification/category/train_validation.json",
+      "classification_test_dataset": "data/classification/category/test.json",
+      "association_model": "data/models/association_rules.json",
+      "category_model": "data/models/category_classifier.json",
+      "category_estimator": "data/models/category_classifier.joblib",
+      "input_data_quality_report": "data/testing/input_data_test_report.json",
+      "association_model_quality_report": "data/testing/ml_model_test_report.json",
+      "category_model_quality_report": "data/testing/category_ml_model_test_report.json",
+      "project_quality_report": "data/testing/project_quality_report.json",
+      "drift_test_report": "data/testing/drift_test_report.json",
+      "category_explainability_report": "data/explainability/category_classifier_explanation_report.json",
+      "llm_exploratory_test_plan": "data/testing/llm_exploratory_test_plan.json",
+      "stage_history": "data/runs/stage_history.json",
+      "stage_history_markdown": "data/reports/stage_history.md",
+      "stage_metric_history_markdown": "data/reports/stage_metric_history.md",
+      "latest_markdown_run_report": "data/reports/latest_run_report.md"
+    }
+  },
+
+  "reporting": {
+    "run_markdown": {
+      // By default, render the latest tracked run into a human-readable Markdown report.
+      "run_report_input": "data/runs/run_index.json",
+      "use_latest_run": true,
+      "drift_report_input": "data/testing/drift_test_report.json",
+      "output": "data/reports/latest_run_report.md",
+      "max_metric_deltas": 15,
+      "max_drift_distributions": 5,
+      "max_artifacts": 12
+    },
+
+    "markdown_reports": {
+      // Render all known machine-readable JSON reports into Markdown tables for human review.
+      "output_dir": "data/reports",
+      "run_report_input": "data/runs/run_index.json",
+      "use_latest_run": true,
+      "drift_report_input": "data/testing/drift_test_report.json",
+      "include_run_report": true,
+      "max_checks": 100,
+      "max_rows": 30,
+      "reports": {
+        "data_preprocessing": "data/processed/grocery_data_quality_report.json",
+        "association_validation": "data/validation/association_validation_report.json",
+        "association_testing": "data/testing/association_test_report.json",
+        "association_model_quality": "data/testing/ml_model_test_report.json",
+        "category_validation": "data/validation/category_classifier_validation_report.json",
+        "category_testing": "data/testing/category_classifier_test_report.json",
+        "category_model_quality": "data/testing/category_ml_model_test_report.json",
+        "input_data_quality": "data/testing/input_data_test_report.json",
+        "drift_testing": "data/testing/drift_test_report.json",
+        "project_quality": "data/testing/project_quality_report.json",
+        "category_explainability": "data/explainability/category_classifier_explanation_report.json",
+        "llm_exploratory_plan": "data/testing/llm_exploratory_test_plan.json",
+        "stage_history": "data/runs/stage_history.json"
+      }
+    }
+  },
+
+  "explainability": {
+    "category_classifier": {
+      // Reads the trained classifier and writes top-token evidence per predicted class.
+      "model_input": "data/models/category_classifier.json",
+      "output": "data/explainability/category_classifier_explanation_report.json",
+      "top_features_per_class": 20
+    }
+  },
+
+  "llm_exploratory_testing": {
+    // A test-charter artifact for future LLM-based features. It does not call an LLM yet.
+    "target_model_name": "grocery-ai-assistant",
+    "domain": "grocery AI assistant",
+    "session_duration_minutes": 45,
+    "output": "data/testing/llm_exploratory_test_plan.json"
   }
 }
