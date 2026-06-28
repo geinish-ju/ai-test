@@ -1,34 +1,32 @@
 from __future__ import annotations
 
-import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from ai_testing.run_tracking import RunTrackingConfig, build_run_report
+
+Record = dict[str, Any]
 
 
 def test_run_tracking_marks_directional_metric_regression_and_quality_decision(
     tmp_path: Path,
+    write_json_file: Callable[[Path, Any], None],
 ) -> None:
     category_test_report = tmp_path / "category_classifier_test_report.json"
     project_quality_report = tmp_path / "project_quality_report.json"
-    category_test_report.write_text(
-        json.dumps({"test": {"accuracy": 0.84}}, ensure_ascii=False),
-        encoding="utf-8",
-    )
-    project_quality_report.write_text(
-        json.dumps(
-            {
-                "report_type": "project_quality_gates",
-                "status": "passed",
-                "summary": {"check_count": 3, "passed_count": 3, "failed_count": 0},
-                "decision": {
-                    "outcome": "accepted",
-                    "recommendation": "Accept the candidate.",
-                },
+    write_json_file(category_test_report, {"test": {"accuracy": 0.84}})
+    write_json_file(
+        project_quality_report,
+        {
+            "report_type": "project_quality_gates",
+            "status": "passed",
+            "summary": {"check_count": 3, "passed_count": 3, "failed_count": 0},
+            "decision": {
+                "outcome": "accepted",
+                "recommendation": "Accept the candidate.",
             },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+        },
     )
 
     report = build_run_report(

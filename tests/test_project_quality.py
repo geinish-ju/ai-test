@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 from ai_testing.project_quality import aggregate_quality_reports
 from ai_testing.reporting import build_markdown_report
 
+Record = dict[str, Any]
 
-def test_project_quality_rejects_critical_child_failure() -> None:
+
+def test_project_quality_rejects_critical_child_failure(
+    quality_report_factory: Callable[..., Record],
+) -> None:
     report = aggregate_quality_reports(
         {
-            "input_data": _quality_report("input_data_test", "passed"),
-            "category_model": _quality_report(
+            "input_data": quality_report_factory("input_data_test", "passed"),
+            "category_model": quality_report_factory(
                 "model_quality_test",
                 "failed",
                 failed_check={
@@ -37,10 +44,12 @@ def test_project_quality_rejects_critical_child_failure() -> None:
     )
 
 
-def test_project_quality_marks_major_only_failures_for_review() -> None:
+def test_project_quality_marks_major_only_failures_for_review(
+    quality_report_factory: Callable[..., Record],
+) -> None:
     report = aggregate_quality_reports(
         {
-            "association_model": _quality_report(
+            "association_model": quality_report_factory(
                 "model_quality_test",
                 "failed",
                 failed_check={
@@ -61,11 +70,13 @@ def test_project_quality_marks_major_only_failures_for_review() -> None:
     assert report["warnings"][0]["recommended_action"].startswith("Inspect association rule")
 
 
-def test_project_quality_markdown_contains_decision_and_child_matrix() -> None:
+def test_project_quality_markdown_contains_decision_and_child_matrix(
+    quality_report_factory: Callable[..., Record],
+) -> None:
     report = aggregate_quality_reports(
         {
-            "input_data": _quality_report("input_data_test", "passed"),
-            "category_model": _quality_report(
+            "input_data": quality_report_factory("input_data_test", "passed"),
+            "category_model": quality_report_factory(
                 "model_quality_test",
                 "failed",
                 failed_check={
@@ -86,25 +97,3 @@ def test_project_quality_markdown_contains_decision_and_child_matrix() -> None:
     assert "### Blockers" in markdown
     assert "## Child Quality Reports" in markdown
     assert "`category_model`" in markdown
-
-
-def _quality_report(
-    report_type: str,
-    status: str,
-    *,
-    failed_check: dict[str, object] | None = None,
-) -> dict[str, object]:
-    checks = []
-    if failed_check is not None:
-        checks.append({**failed_check, "status": "failed"})
-    return {
-        "report_type": report_type,
-        "subject": "fixture",
-        "status": status,
-        "summary": {
-            "check_count": len(checks),
-            "passed_count": 0 if checks else 1,
-            "failed_count": len(checks),
-        },
-        "checks": checks,
-    }

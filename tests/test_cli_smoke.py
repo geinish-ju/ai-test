@@ -1,34 +1,28 @@
 from __future__ import annotations
 
-import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from ai_testing.cli import main
 
-
-def _cli_args(tmp_path: Path, *args: str) -> list[str]:
-    return [
-        "--stage-history-output",
-        str(tmp_path / "stage_history.json"),
-        "--stage-history-markdown-output",
-        str(tmp_path / "stage_history.md"),
-        "--stage-metric-history-markdown-output",
-        str(tmp_path / "stage_metric_history.md"),
-        *args,
-    ]
+Record = dict[str, Any]
 
 
-def test_sample_export_and_preprocessing_smoke(tmp_path: Path) -> None:
+def test_sample_export_and_preprocessing_smoke(
+    tmp_path: Path,
+    cli_args: Callable[..., list[str]],
+    read_json_file: Callable[[Path], Any],
+) -> None:
     raw_path = tmp_path / "sample_order_items.json"
     second_raw_path = tmp_path / "sample_order_items_second.json"
     processed_path = tmp_path / "processed_order_items.json"
     report_path = tmp_path / "preprocessing_report.json"
 
-    assert main(_cli_args(tmp_path, "export-sample", "--output", str(raw_path))) == 0
+    assert main(cli_args("export-sample", "--output", str(raw_path))) == 0
     assert (
         main(
-            _cli_args(
-                tmp_path,
+            cli_args(
                 "preprocess-data",
                 "--input",
                 str(raw_path),
@@ -41,11 +35,11 @@ def test_sample_export_and_preprocessing_smoke(tmp_path: Path) -> None:
         )
         == 0
     )
-    assert main(_cli_args(tmp_path, "export-sample", "--output", str(second_raw_path))) == 0
+    assert main(cli_args("export-sample", "--output", str(second_raw_path))) == 0
 
-    processed_records = json.loads(processed_path.read_text(encoding="utf-8"))
-    report = json.loads(report_path.read_text(encoding="utf-8"))
-    stage_history = json.loads((tmp_path / "stage_history.json").read_text(encoding="utf-8"))
+    processed_records = read_json_file(processed_path)
+    report = read_json_file(report_path)
+    stage_history = read_json_file(tmp_path / "stage_history.json")
     stage_history_markdown = (tmp_path / "stage_history.md").read_text(encoding="utf-8")
     metric_history_markdown = (tmp_path / "stage_metric_history.md").read_text(encoding="utf-8")
     latest_sample_export = stage_history["latest_execution_by_stage"]["data_acquisition.sample"]
@@ -60,14 +54,17 @@ def test_sample_export_and_preprocessing_smoke(tmp_path: Path) -> None:
     assert "summary.record_count" in metric_history_markdown
 
 
-def test_run_tracking_smoke(tmp_path: Path) -> None:
+def test_run_tracking_smoke(
+    tmp_path: Path,
+    cli_args: Callable[..., list[str]],
+    read_json_file: Callable[[Path], Any],
+) -> None:
     runs_dir = tmp_path / "runs"
     index_path = runs_dir / "run_index.json"
 
     assert (
         main(
-            _cli_args(
-                tmp_path,
+            cli_args(
                 "track-run",
                 "--run-id",
                 "smoke-run",
@@ -83,9 +80,9 @@ def test_run_tracking_smoke(tmp_path: Path) -> None:
 
     run_report_path = runs_dir / "smoke-run" / "run_report.json"
     run_report_markdown_path = runs_dir / "smoke-run" / "run_report.md"
-    run_report = json.loads(run_report_path.read_text(encoding="utf-8"))
-    run_index = json.loads(index_path.read_text(encoding="utf-8"))
-    stage_history = json.loads((tmp_path / "stage_history.json").read_text(encoding="utf-8"))
+    run_report = read_json_file(run_report_path)
+    run_index = read_json_file(index_path)
+    stage_history = read_json_file(tmp_path / "stage_history.json")
     assert run_report["run_id"] == "smoke-run"
     assert run_report["report_type"] == "pipeline_run_report"
     assert run_report_markdown_path.exists()
@@ -95,7 +92,11 @@ def test_run_tracking_smoke(tmp_path: Path) -> None:
     )
 
 
-def test_drift_and_markdown_report_smoke(tmp_path: Path) -> None:
+def test_drift_and_markdown_report_smoke(
+    tmp_path: Path,
+    cli_args: Callable[..., list[str]],
+    read_json_file: Callable[[Path], Any],
+) -> None:
     runs_dir = tmp_path / "runs"
     index_path = runs_dir / "run_index.json"
     drift_path = tmp_path / "drift_report.json"
@@ -103,8 +104,7 @@ def test_drift_and_markdown_report_smoke(tmp_path: Path) -> None:
 
     assert (
         main(
-            _cli_args(
-                tmp_path,
+            cli_args(
                 "track-run",
                 "--run-id",
                 "baseline-run",
@@ -119,8 +119,7 @@ def test_drift_and_markdown_report_smoke(tmp_path: Path) -> None:
     )
     assert (
         main(
-            _cli_args(
-                tmp_path,
+            cli_args(
                 "track-run",
                 "--run-id",
                 "candidate-run",
@@ -134,8 +133,7 @@ def test_drift_and_markdown_report_smoke(tmp_path: Path) -> None:
     )
     assert (
         main(
-            _cli_args(
-                tmp_path,
+            cli_args(
                 "test-drift",
                 "--run-report-input",
                 str(index_path),
@@ -147,8 +145,7 @@ def test_drift_and_markdown_report_smoke(tmp_path: Path) -> None:
     )
     assert (
         main(
-            _cli_args(
-                tmp_path,
+            cli_args(
                 "generate-run-report",
                 "--run-report-input",
                 str(index_path),
@@ -161,43 +158,44 @@ def test_drift_and_markdown_report_smoke(tmp_path: Path) -> None:
         == 0
     )
 
-    drift_report = json.loads(drift_path.read_text(encoding="utf-8"))
+    drift_report = read_json_file(drift_path)
     markdown = markdown_path.read_text(encoding="utf-8")
     assert drift_report["report_type"] == "drift_quality_test"
     assert drift_report["status"] == "passed"
     assert "AI Testing Run Report" in markdown
 
 
-def test_generate_markdown_reports_smoke(tmp_path: Path) -> None:
+def test_generate_markdown_reports_smoke(
+    tmp_path: Path,
+    cli_args: Callable[..., list[str]],
+    write_json_file: Callable[[Path, Any], None],
+) -> None:
     json_report_path = tmp_path / "input_data_report.json"
     output_dir = tmp_path / "reports"
-    json_report_path.write_text(
-        json.dumps(
-            {
-                "report_type": "input_data_test",
-                "subject": "sample_dataset",
-                "step": "Input data testing",
-                "status": "passed",
-                "summary": {"check_count": 1, "passed_count": 1, "failed_count": 0},
-                "checks": [
-                    {
-                        "id": "sample.required_fields",
-                        "status": "passed",
-                        "severity": "critical",
-                        "message": "Required fields are present.",
-                        "observed": {"missing": []},
-                        "expected": {"missing": []},
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
+    write_json_file(
+        json_report_path,
+        {
+            "report_type": "input_data_test",
+            "subject": "sample_dataset",
+            "step": "Input data testing",
+            "status": "passed",
+            "summary": {"check_count": 1, "passed_count": 1, "failed_count": 0},
+            "checks": [
+                {
+                    "id": "sample.required_fields",
+                    "status": "passed",
+                    "severity": "critical",
+                    "message": "Required fields are present.",
+                    "observed": {"missing": []},
+                    "expected": {"missing": []},
+                }
+            ],
+        },
     )
 
     assert (
         main(
-            _cli_args(
-                tmp_path,
+            cli_args(
                 "generate-markdown-reports",
                 "--output-dir",
                 str(output_dir),
@@ -219,25 +217,24 @@ def test_generate_markdown_reports_smoke(tmp_path: Path) -> None:
     assert "Stage Metric History" in metric_history_markdown
 
 
-def test_run_quality_gates_cli_writes_decision_report(tmp_path: Path) -> None:
+def test_run_quality_gates_cli_writes_decision_report(
+    tmp_path: Path,
+    cli_args: Callable[..., list[str]],
+    read_json_file: Callable[[Path], Any],
+    write_json_file: Callable[[Path, Any], None],
+    passed_quality_report: Callable[[str], Record],
+) -> None:
     input_report = tmp_path / "input_data_test_report.json"
     association_report = tmp_path / "association_model_report.json"
     category_report = tmp_path / "category_model_report.json"
     output_path = tmp_path / "project_quality_report.json"
-    input_report.write_text(json.dumps(_passed_quality_report("input_data_test")), encoding="utf-8")
-    association_report.write_text(
-        json.dumps(_passed_quality_report("model_quality_test")),
-        encoding="utf-8",
-    )
-    category_report.write_text(
-        json.dumps(_passed_quality_report("model_quality_test")),
-        encoding="utf-8",
-    )
+    write_json_file(input_report, passed_quality_report("input_data_test"))
+    write_json_file(association_report, passed_quality_report("model_quality_test"))
+    write_json_file(category_report, passed_quality_report("model_quality_test"))
 
     assert (
         main(
-            _cli_args(
-                tmp_path,
+            cli_args(
                 "run-quality-gates",
                 "--input-data-report",
                 str(input_report),
@@ -252,7 +249,7 @@ def test_run_quality_gates_cli_writes_decision_report(tmp_path: Path) -> None:
         == 0
     )
 
-    report = json.loads(output_path.read_text(encoding="utf-8"))
+    report = read_json_file(output_path)
     assert report["status"] == "passed"
     assert report["decision"]["outcome"] == "accepted"
     assert report["recommended_actions"] == [
@@ -260,32 +257,15 @@ def test_run_quality_gates_cli_writes_decision_report(tmp_path: Path) -> None:
     ]
 
 
-def test_llm_exploratory_plan_smoke(tmp_path: Path) -> None:
+def test_llm_exploratory_plan_smoke(
+    tmp_path: Path,
+    cli_args: Callable[..., list[str]],
+    read_json_file: Callable[[Path], Any],
+) -> None:
     output_path = tmp_path / "llm_plan.json"
 
-    assert (
-        main(_cli_args(tmp_path, "create-llm-exploratory-plan", "--output", str(output_path))) == 0
-    )
+    assert main(cli_args("create-llm-exploratory-plan", "--output", str(output_path))) == 0
 
-    report = json.loads(output_path.read_text(encoding="utf-8"))
+    report = read_json_file(output_path)
     assert report["report_type"] == "llm_exploratory_test_plan"
     assert report["summary"]["charter_count"] >= 5
-
-
-def _passed_quality_report(report_type: str) -> dict[str, object]:
-    return {
-        "report_type": report_type,
-        "subject": "fixture",
-        "status": "passed",
-        "summary": {"check_count": 1, "passed_count": 1, "failed_count": 0},
-        "checks": [
-            {
-                "id": "fixture.passed",
-                "status": "passed",
-                "severity": "critical",
-                "message": "Fixture check passed.",
-                "observed": {"status": "passed"},
-                "expected": {"status": "passed"},
-            }
-        ],
-    }

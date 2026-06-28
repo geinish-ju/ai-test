@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from ai_testing.ml_model_testing import (
@@ -13,8 +14,14 @@ from ai_testing.ml_model_testing import (
     test_text_classifier_ml_model as run_text_classifier_ml_model_test,
 )
 
+Record = dict[str, Any]
 
-def test_text_classifier_quality_rejects_target_leakage_feature() -> None:
+
+def test_text_classifier_quality_rejects_target_leakage_feature(
+    classification_validation_report: Record,
+    classification_test_report: Record,
+    failed_check_ids: Callable[[Record], set[str]],
+) -> None:
     report = run_text_classifier_ml_model_test(
         model={
             "model_type": "text_classification",
@@ -31,8 +38,8 @@ def test_text_classifier_quality_rejects_target_leakage_feature() -> None:
             },
             "parameters": {"text_field": "main_category", "label_field": "label"},
         },
-        validation_report=_classification_validation_report(),
-        test_report=_classification_test_report(),
+        validation_report=classification_validation_report,
+        test_report=classification_test_report,
         classification_manifest={
             "step": "Supervised classification dataset preprocessing",
             "global": {
@@ -44,7 +51,7 @@ def test_text_classifier_quality_rejects_target_leakage_feature() -> None:
         config=TextClassifierMLModelTestConfig(),
     ).report
 
-    failed_ids = _failed_check_ids(report)
+    failed_ids = failed_check_ids(report)
 
     assert report["status"] == "failed"
     assert "ml_model.text_feature_field_is_safe" in failed_ids
@@ -52,7 +59,9 @@ def test_text_classifier_quality_rejects_target_leakage_feature() -> None:
     assert "ml_model.validation_test_accuracy_delta" not in failed_ids
 
 
-def test_association_quality_rejects_training_on_holdout_test_dataset() -> None:
+def test_association_quality_rejects_training_on_holdout_test_dataset(
+    failed_check_ids: Callable[[Record], set[str]],
+) -> None:
     report = run_association_ml_model_test(
         model={
             "model_type": "association_rules",
@@ -89,43 +98,4 @@ def test_association_quality_rejects_training_on_holdout_test_dataset() -> None:
     ).report
 
     assert report["status"] == "failed"
-    assert "ml_model.training_input_is_not_test" in _failed_check_ids(report)
-
-
-def _classification_validation_report() -> dict[str, Any]:
-    return {
-        "validation_type": "k-fold cross-validation",
-        "model_type": "text_classification",
-        "learning_type": "supervised",
-        "summary": {
-            "fold_count": 5,
-            "mean_accuracy": 0.95,
-            "mean_macro_precision": 0.9,
-            "mean_macro_recall": 0.91,
-            "mean_macro_f1": 0.9,
-            "mean_weighted_f1": 0.95,
-            "std_accuracy": 0.01,
-            "std_macro_f1": 0.02,
-        },
-    }
-
-
-def _classification_test_report() -> dict[str, Any]:
-    return {
-        "testing_type": "hold-out test",
-        "model_type": "text_classification",
-        "learning_type": "supervised",
-        "test": {
-            "evaluated_record_count": 40,
-            "class_count": 4,
-            "accuracy": 0.94,
-            "macro_precision": 0.9,
-            "macro_recall": 0.89,
-            "macro_f1": 0.88,
-            "weighted_f1": 0.94,
-        },
-    }
-
-
-def _failed_check_ids(report: dict[str, Any]) -> set[str]:
-    return {str(check["id"]) for check in report["checks"] if check.get("status") == "failed"}
+    assert "ml_model.training_input_is_not_test" in failed_check_ids(report)
