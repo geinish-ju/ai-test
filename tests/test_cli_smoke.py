@@ -219,6 +219,47 @@ def test_generate_markdown_reports_smoke(tmp_path: Path) -> None:
     assert "Stage Metric History" in metric_history_markdown
 
 
+def test_run_quality_gates_cli_writes_decision_report(tmp_path: Path) -> None:
+    input_report = tmp_path / "input_data_test_report.json"
+    association_report = tmp_path / "association_model_report.json"
+    category_report = tmp_path / "category_model_report.json"
+    output_path = tmp_path / "project_quality_report.json"
+    input_report.write_text(json.dumps(_passed_quality_report("input_data_test")), encoding="utf-8")
+    association_report.write_text(
+        json.dumps(_passed_quality_report("model_quality_test")),
+        encoding="utf-8",
+    )
+    category_report.write_text(
+        json.dumps(_passed_quality_report("model_quality_test")),
+        encoding="utf-8",
+    )
+
+    assert (
+        main(
+            _cli_args(
+                tmp_path,
+                "run-quality-gates",
+                "--input-data-report",
+                str(input_report),
+                "--association-model-report",
+                str(association_report),
+                "--category-model-report",
+                str(category_report),
+                "--output",
+                str(output_path),
+            )
+        )
+        == 0
+    )
+
+    report = json.loads(output_path.read_text(encoding="utf-8"))
+    assert report["status"] == "passed"
+    assert report["decision"]["outcome"] == "accepted"
+    assert report["recommended_actions"] == [
+        "Keep the report with the run evidence as the model acceptance record."
+    ]
+
+
 def test_llm_exploratory_plan_smoke(tmp_path: Path) -> None:
     output_path = tmp_path / "llm_plan.json"
 
@@ -229,3 +270,22 @@ def test_llm_exploratory_plan_smoke(tmp_path: Path) -> None:
     report = json.loads(output_path.read_text(encoding="utf-8"))
     assert report["report_type"] == "llm_exploratory_test_plan"
     assert report["summary"]["charter_count"] >= 5
+
+
+def _passed_quality_report(report_type: str) -> dict[str, object]:
+    return {
+        "report_type": report_type,
+        "subject": "fixture",
+        "status": "passed",
+        "summary": {"check_count": 1, "passed_count": 1, "failed_count": 0},
+        "checks": [
+            {
+                "id": "fixture.passed",
+                "status": "passed",
+                "severity": "critical",
+                "message": "Fixture check passed.",
+                "observed": {"status": "passed"},
+                "expected": {"status": "passed"},
+            }
+        ],
+    }

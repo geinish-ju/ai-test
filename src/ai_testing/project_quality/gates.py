@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -21,6 +21,8 @@ def aggregate_quality_reports(
     checks: list[Record] = []
     report_summaries: Record = {}
     failed_reports: list[str] = []
+    blockers: list[Record] = []
+    warnings: list[Record] = []
     total_child_checks = 0
     total_child_failures = 0
 
@@ -33,6 +35,9 @@ def aggregate_quality_reports(
         total_child_failures += failed_count
         if status != "passed":
             failed_reports.append(report_name)
+            report_issues = _quality_issues(report_name, report)
+            blockers.extend(issue for issue in report_issues if issue["severity"] == "critical")
+            warnings.extend(issue for issue in report_issues if issue["severity"] != "critical")
 
         report_summaries[report_name] = {
             "status": status,
@@ -58,7 +63,15 @@ def aggregate_quality_reports(
         "failed_report_count": len(failed_reports),
         "total_child_check_count": total_child_checks,
         "total_child_failed_check_count": total_child_failures,
+        "blocker_count": len(blockers),
+        "warning_count": len(warnings),
     }
+    decision = _quality_decision(
+        failed_reports=failed_reports,
+        blockers=blockers,
+        warnings=warnings,
+        metrics=metrics,
+    )
 
     return ProjectQualityResult(
         report=build_standard_report(
@@ -69,6 +82,10 @@ def aggregate_quality_reports(
             checks=checks,
             metrics=metrics,
             details={
+                "decision": decision,
+                "blockers": blockers,
+                "warnings": warnings,
+                "recommended_actions": decision["recommended_actions"],
                 "reports": report_summaries,
                 "failed_reports": failed_reports,
             },
@@ -110,6 +127,130 @@ def _failed_child_checks(report: Mapping[str, Any]) -> list[Record]:
             }
         )
     return failed
+
+
+def _quality_issues(report_name: str, report: Mapping[str, Any]) -> list[Record]:
+    failed_checks = _failed_child_checks(report)
+    if not failed_checks:
+        return [
+            {
+                "report": report_name,
+                "check_id": None,
+                "severity": "critical",
+                "message": f"{report_name} quality report did not pass.",
+                "observed": {
+                    "status": report.get("status"),
+                    "failed_count": _int_value(_mapping(report.get("summary")).get("failed_count")),
+                },
+                "expected": {"status": "passed", "failed_count": 0},
+                "recommended_action": _default_action(report_name),
+            }
+        ]
+
+    return [_quality_issue(report_name, check) for check in failed_checks]
+
+
+def _quality_issue(report_name: str, check: Mapping[str, Any]) -> Record:
+    return {
+        "report": report_name,
+        "check_id": check.get("id"),
+        "severity": _severity(check.get("severity")),
+        "message": check.get("message"),
+        "observed": check.get("observed"),
+        "expected": check.get("expected"),
+        "recommended_action": _recommended_action(report_name, check),
+    }
+
+
+def _quality_decision(
+    *,
+    failed_reports: list[str],
+    blockers: Sequence[Mapping[str, Any]],
+    warnings: Sequence[Mapping[str, Any]],
+    metrics: Mapping[str, Any],
+) -> Record:
+    if blockers:
+        outcome = "rejected"
+        recommendation = "Do not accept the candidate model or data release."
+        rationale = [
+            "At least one critical quality gate failed.",
+            (
+                "Critical failures can indicate data leakage, invalid evaluation, "
+                "missing evidence, or unsafe input data."
+            ),
+        ]
+    elif warnings:
+        outcome = "needs_review"
+        recommendation = "Review non-critical failures before accepting the candidate."
+        rationale = [
+            "No critical blocker was found, but at least one major or minor check failed.",
+            "Acceptance requires an explicit risk decision from the reviewer.",
+        ]
+    else:
+        outcome = "accepted"
+        recommendation = "Accept the candidate for the current learning project scope."
+        rationale = [
+            "All aggregated quality reports passed.",
+            "Input data, model quality, and optional drift evidence meet configured gates.",
+        ]
+
+    return {
+        "outcome": outcome,
+        "recommendation": recommendation,
+        "rationale": rationale,
+        "failed_reports": failed_reports,
+        "blocker_count": metrics.get("blocker_count", 0),
+        "warning_count": metrics.get("warning_count", 0),
+        "recommended_actions": _recommended_actions(blockers, warnings),
+    }
+
+
+def _recommended_actions(
+    blockers: Sequence[Mapping[str, Any]],
+    warnings: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    issues = [*blockers, *warnings]
+    actions: list[str] = []
+    for issue in issues:
+        action = _string_value(issue.get("recommended_action"))
+        if action is not None and action not in actions:
+            actions.append(action)
+    if (
+        issues
+        and "Rerun the affected pipeline stage and regenerate project quality gates." not in actions
+    ):
+        actions.append("Rerun the affected pipeline stage and regenerate project quality gates.")
+    if not issues:
+        actions.append("Keep the report with the run evidence as the model acceptance record.")
+    return actions
+
+
+def _recommended_action(report_name: str, check: Mapping[str, Any]) -> str:
+    diagnostics = _mapping(check.get("diagnostics"))
+    suggested_actions = diagnostics.get("suggested_actions")
+    if isinstance(suggested_actions, Sequence) and not isinstance(suggested_actions, (str, bytes)):
+        for action in suggested_actions:
+            action_text = _string_value(action)
+            if action_text is not None:
+                return action_text
+    return _default_action(report_name)
+
+
+def _default_action(report_name: str) -> str:
+    if report_name == "input_data":
+        return "Fix data acquisition or preprocessing, then rerun input data testing."
+    if report_name == "category_model":
+        return "Inspect classifier validation/test metrics, leakage checks, and class coverage."
+    if report_name == "association_model":
+        return "Inspect association rule stability, confidence, lift, and validation-test gaps."
+    if report_name == "drift":
+        return "Investigate metric regressions or distribution drift before accepting the run."
+    return "Inspect the failed child report and fix the affected pipeline stage."
+
+
+def _severity(value: Any) -> str:
+    severity = _string_value(value)
+    return severity if severity in {"critical", "major", "minor"} else "major"
 
 
 def _compact_diagnostics(value: Any) -> Any:

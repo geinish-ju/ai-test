@@ -1356,7 +1356,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     track_run_parser.add_argument(
         "--mlflow-tracking-uri",
-        default=config_str(mlflow_config, "tracking_uri", "file:./mlruns"),
+        default=config_str(mlflow_config, "tracking_uri", "sqlite:///data/mlflow/mlflow.db"),
         help="MLflow tracking URI",
     )
     track_run_parser.add_argument(

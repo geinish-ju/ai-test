@@ -87,8 +87,8 @@ def _add_quality(
             "",
             "## Quality Gates",
             "",
-            "| Report | Status | Failed Checks |",
-            "|---|---:|---:|",
+            "| Report | Status | Decision | Failed Checks |",
+            "|---|---:|---:|---:|",
         ]
     )
     for name, report in sorted(quality_reports.items()):
@@ -96,13 +96,14 @@ def _add_quality(
             continue
         lines.append(
             f"| `{name}` | `{_text(report.get('status'), 'unknown')}` | "
+            f"`{_text(report.get('decision_outcome'), '')}` | "
             f"{report.get('failed_count', 0)} |"
         )
 
     if drift_report is not None:
         summary = _mapping(drift_report.get("summary"))
         lines.append(
-            f"| `drift_testing` | `{_text(drift_report.get('status'), 'unknown')}` | "
+            f"| `drift_testing` | `{_text(drift_report.get('status'), 'unknown')}` | `` | "
             f"{summary.get('failed_count', 0)} |"
         )
 
@@ -227,11 +228,11 @@ def _add_mlops(lines: list[str], run_report: Mapping[str, Any]) -> None:
             "|---|---:|---|",
             (
                 f"| `MLflow` | `{_text(mlflow.get('status'), 'unknown')}` | "
-                f"`{_text(mlflow.get('tracking_uri'), _text(mlflow.get('reason'), ''))}` |"
+                f"`{_mlops_details(mlflow, completed_detail='tracking_uri')}` |"
             ),
             (
                 f"| `DVC` | `{_text(dvc.get('status'), 'unknown')}` | "
-                f"`tracked={_text(dvc.get('tracked_artifact_count'), '0')}` |"
+                f"`{_mlops_details(dvc, completed_detail='tracked_artifact_count')}` |"
             ),
         ]
     )
@@ -255,6 +256,19 @@ def _add_stage_reports(lines: list[str], run_report: Mapping[str, Any]) -> None:
             f"| `{name}` | `{_text(report.get('exists'), '')}` | "
             f"`{_text(report.get('status'), '')}` | `{_text(report.get('report_type'), '')}` |"
         )
+
+
+def _mlops_details(report: Mapping[str, Any], *, completed_detail: str) -> str:
+    status = _text(report.get("status"), "unknown")
+    reason = _text(report.get("reason"), "")
+    message = _text(report.get("message"), "")
+    if reason:
+        return f"{reason}: {message}" if message else reason
+    if status == "disabled":
+        return "disabled"
+    if completed_detail == "tracked_artifact_count":
+        return f"tracked={_text(report.get(completed_detail), '0')}"
+    return _text(report.get(completed_detail), "")
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:

@@ -503,6 +503,10 @@ def _quality_summary(loaded_reports: Mapping[str, tuple[Path, Record | None]]) -
             "check_count": _int_value(summary.get("check_count")),
             "failed_count": failed_count,
         }
+        decision = _mapping(report.get("decision"))
+        if decision:
+            reports[source]["decision_outcome"] = decision.get("outcome")
+            reports[source]["recommendation"] = decision.get("recommendation")
         if status != "passed" or failed_count > 0:
             failed_reports.append(source)
 

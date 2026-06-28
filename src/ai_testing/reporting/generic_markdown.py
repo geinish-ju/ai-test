@@ -27,8 +27,10 @@ def build_markdown_report(
     lines: list[str] = []
     _add_title(lines, report, title=title, source_path=source_path)
     _add_overview(lines, report)
+    _add_quality_decision(lines, report, report_config)
     _add_summary(lines, report)
     _add_metrics(lines, report)
+    _add_project_quality_matrix(lines, report)
     _add_test_results(lines, report)
     _add_checks(lines, report, report_config)
     _add_per_class(lines, report, report_config)
@@ -85,6 +87,69 @@ def _add_summary(lines: list[str], report: Mapping[str, Any]) -> None:
     _add_key_value_table(lines, "Summary", summary_candidates)
 
 
+def _add_quality_decision(
+    lines: list[str],
+    report: Mapping[str, Any],
+    config: MarkdownReportConfig,
+) -> None:
+    decision = _mapping(report.get("decision"))
+    if not decision:
+        return
+
+    lines.extend(
+        [
+            "",
+            "## Quality Decision",
+            "",
+            "| Field | Value |",
+            "|---|---|",
+            f"| Outcome | `{_escape(decision.get('outcome'))}` |",
+            f"| Recommendation | {_cell(decision.get('recommendation'))} |",
+            f"| Blockers | {_cell(decision.get('blocker_count'))} |",
+            f"| Warnings | {_cell(decision.get('warning_count'))} |",
+        ]
+    )
+    rationale = _sequence(decision.get("rationale"))
+    if rationale:
+        lines.extend(["", "### Rationale", ""])
+        for item in rationale[: max(config.max_rows, 0)]:
+            lines.append(f"- {_cell(item)}")
+
+    _add_issue_table(lines, "Blockers", _list_of_mappings(report.get("blockers")), config)
+    _add_issue_table(lines, "Warnings", _list_of_mappings(report.get("warnings")), config)
+
+    actions = _sequence(report.get("recommended_actions") or decision.get("recommended_actions"))
+    if actions:
+        lines.extend(["", "### Recommended Actions", ""])
+        for action in actions[: max(config.max_rows, 0)]:
+            lines.append(f"- {_cell(action)}")
+
+
+def _add_issue_table(
+    lines: list[str],
+    heading: str,
+    issues: Sequence[Mapping[str, Any]],
+    config: MarkdownReportConfig,
+) -> None:
+    if not issues:
+        return
+    lines.extend(
+        [
+            "",
+            f"### {heading}",
+            "",
+            "| Report | Check | Severity | Finding | Action |",
+            "|---|---|---:|---|---|",
+        ]
+    )
+    for issue in issues[: max(config.max_rows, 0)]:
+        lines.append(
+            f"| `{_escape(issue.get('report'))}` | `{_escape(issue.get('check_id'))}` | "
+            f"`{_escape(issue.get('severity'))}` | {_cell(issue.get('message'))} | "
+            f"{_cell(issue.get('recommended_action'))} |"
+        )
+
+
 def _add_metrics(lines: list[str], report: Mapping[str, Any]) -> None:
     metrics = _mapping(report.get("metrics"))
     if not metrics:
@@ -94,6 +159,28 @@ def _add_metrics(lines: list[str], report: Mapping[str, Any]) -> None:
         if isinstance(value, Mapping) and "value" in value:
             value = value.get("value")
         lines.append(f"| `{_escape(key)}` | {_cell(value)} |")
+
+
+def _add_project_quality_matrix(lines: list[str], report: Mapping[str, Any]) -> None:
+    reports = _mapping(report.get("reports"))
+    if not reports:
+        return
+    lines.extend(
+        [
+            "",
+            "## Child Quality Reports",
+            "",
+            "| Report | Status | Type | Subject | Checks | Failed |",
+            "|---|---:|---|---|---:|---:|",
+        ]
+    )
+    for name, child_report in sorted(reports.items()):
+        child = _mapping(child_report)
+        lines.append(
+            f"| `{_escape(name)}` | `{_escape(child.get('status'))}` | "
+            f"`{_escape(child.get('report_type'))}` | `{_escape(child.get('subject'))}` | "
+            f"{_cell(child.get('check_count'))} | {_cell(child.get('failed_count'))} |"
+        )
 
 
 def _add_test_results(lines: list[str], report: Mapping[str, Any]) -> None:
@@ -409,6 +496,12 @@ def _list_of_mappings(value: Any) -> list[Record]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
         return []
     return [dict(item) for item in value if isinstance(item, Mapping)]
+
+
+def _sequence(value: Any) -> list[Any]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return []
+    return list(value)
 
 
 def _string_value(value: Any) -> str | None:

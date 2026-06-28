@@ -610,8 +610,9 @@
       // Optional MLflow Tracking backend. Enable with --mlflow-tracking or this flag.
       "enabled": false,
 
-      // Local file tracking URI by default. Use http(s) URI for a shared tracking server.
-      "tracking_uri": "file:./mlruns",
+      // Local SQLite tracking backend by default. The old file store (./mlruns) is
+      // maintenance-only in recent MLflow versions; use http(s) URI for a shared server.
+      "tracking_uri": "sqlite:///data/mlflow/mlflow.db",
 
       // Experiment that groups AI testing pipeline runs.
       "experiment_name": "ai-grocery-testing",

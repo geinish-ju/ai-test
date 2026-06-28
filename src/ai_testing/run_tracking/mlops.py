@@ -15,7 +15,7 @@ Record = dict[str, Any]
 @dataclass(frozen=True)
 class MLflowTrackingConfig:
     enabled: bool = False
-    tracking_uri: str = "file:./mlruns"
+    tracking_uri: str = "sqlite:///data/mlflow/mlflow.db"
     experiment_name: str = "ai-grocery-testing"
     log_artifacts: bool = True
     artifact_types: tuple[str, ...] = ("report", "manifest", "model")
@@ -65,6 +65,8 @@ def _publish_to_mlflow(
 ) -> Record:
     if not config.enabled:
         return {"status": "disabled"}
+    if config.tracking_uri:
+        _ensure_mlflow_tracking_storage(config.tracking_uri)
 
     try:
         mlflow = importlib.import_module("mlflow")
@@ -129,6 +131,18 @@ def _publish_to_mlflow(
             status="failed",
             reason="mlflow_error",
         )
+
+
+def _ensure_mlflow_tracking_storage(tracking_uri: str) -> None:
+    sqlite_prefix = "sqlite:///"
+    if not tracking_uri.startswith(sqlite_prefix):
+        return
+
+    database_path = tracking_uri.removeprefix(sqlite_prefix)
+    if not database_path or database_path == ":memory:":
+        return
+
+    Path(database_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
 
 
 def _publish_to_dvc(

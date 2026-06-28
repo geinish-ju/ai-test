@@ -13,6 +13,7 @@ dist/
 build/
 reports/
 mlruns/
+data/mlflow/
 data/raw/
 data/processed/
 data/splits/

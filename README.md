@@ -10,9 +10,7 @@ Current scope:
 - create training, validation, and test datasets;
 - build supervised classification datasets;
 - train, validate, and test a supervised category classifier;
-- train an association rules model on training data;
-- validate association rules on k-fold validation data;
-- test the selected association model on the hold-out test dataset;
+- train, validate, and test an association rules model on training data, k-fold validation data, hold-out test dataset;
 - test input data quality and split integrity;
 - test ML model reports against acceptance criteria;
 - aggregate project quality gates for a single pass/fail verdict;
@@ -40,11 +38,8 @@ Current stack:
 - `pytest` smoke tests
 - `ruff`, `mypy`, `pre-commit`
 - GitHub Actions CI
-- Mermaid architecture and sequence diagrams
-- Markdown run and stage reports
 - optional `MLflow` experiment tracking
 - optional `DVC` data/model/report versioning
-- Git
 
 Planned reporting and MLOps stack:
 
@@ -537,16 +532,21 @@ Reports are written to `data/testing/ml_model_test_report.json` and
 separation, forbidden feature usage, validation metrics, final test metrics, and validation-vs-test
 stability.
 
+Decision criteria are documented in `docs/model_quality_decision.md`.
+
 ## Project Quality Gates
 
 Project quality gates aggregate the input data, association model, and category classifier quality
-reports into one pass/fail report.
+reports into one main quality report with an explicit `accepted`, `needs_review`, or `rejected`
+decision, blockers, warnings, and recommended actions.
 
 ```powershell
 ai-test run-quality-gates
 ```
 
-The report is written to `data/testing/project_quality_report.json`.
+The report is written to `data/testing/project_quality_report.json`. Run
+`ai-test generate-markdown-reports` to create the human-readable copy at
+`data/reports/project_quality.md`.
 
 ## Run Tracking
 
@@ -575,9 +575,11 @@ dvc init
 ai-test track-run --run-name "experiment-name" --mlflow-tracking --dvc-versioning
 ```
 
-MLflow receives run parameters, metrics, tags, and selected non-dataset artifacts. DVC tracks the
-configured processed datasets, split manifests, models, and quality reports as lightweight `.dvc`
-metadata. Raw exports are not selected for DVC by default.
+MLflow uses `sqlite:///data/mlflow/mlflow.db` by default and receives run parameters, metrics,
+tags, and selected non-dataset artifacts. If you already have useful old `./mlruns` data, migrate it
+with `mlflow migrate-filestore` before relying on the new SQLite backend. DVC tracks the configured
+processed datasets, split manifests, models, and quality reports as lightweight `.dvc` metadata. Raw
+exports are not selected for DVC by default.
 
 Look at these local artifacts for run comparisons:
 
