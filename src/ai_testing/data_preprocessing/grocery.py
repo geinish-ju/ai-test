@@ -152,10 +152,15 @@ def preprocess_grocery_records(
 ) -> PreprocessingResult:
     preprocessing_config = config or PreprocessingConfig()
     normalized_records = [_normalize_record(dict(record)) for record in raw_records]
-    basket_ids = _build_basket_ids(normalized_records, preprocessing_config.basket_id_prefix)
+    deduplicated_records, incomplete_duplicate_report = _drop_incomplete_duplicate_order_items(
+        normalized_records
+    )
+    cleaned_records, zero_quantity_price_report = _drop_zero_quantity_price_items(
+        deduplicated_records
+    )
+    basket_ids = _build_basket_ids(cleaned_records, preprocessing_config.basket_id_prefix)
     processed_records = [
-        _preprocess_record(record, basket_ids, preprocessing_config)
-        for record in normalized_records
+        _preprocess_record(record, basket_ids, preprocessing_config) for record in cleaned_records
     ]
 
     exact_duplicate_count = _exact_duplicate_count(processed_records)
@@ -164,11 +169,14 @@ def preprocess_grocery_records(
 
     report = build_quality_report(
         raw_records=normalized_records,
+        cleaned_raw_records=cleaned_records,
         processed_records=processed_records,
         removed_fields=_removed_fields(normalized_records, preprocessing_config.output_fields),
+        incomplete_duplicate_report=incomplete_duplicate_report,
+        zero_quantity_price_report=zero_quantity_price_report,
         exact_duplicate_count=exact_duplicate_count,
         dropped_exact_duplicate_count=(
-            len(normalized_records) - len(processed_records)
+            len(cleaned_records) - len(processed_records)
             if preprocessing_config.drop_exact_duplicates
             else 0
         ),
@@ -178,16 +186,24 @@ def preprocess_grocery_records(
 
 def build_quality_report(
     raw_records: Sequence[Record],
+    cleaned_raw_records: Sequence[Record],
     processed_records: Sequence[Record],
     removed_fields: Sequence[str],
+    incomplete_duplicate_report: Record,
+    zero_quantity_price_report: Record,
     exact_duplicate_count: int,
     dropped_exact_duplicate_count: int,
 ) -> Record:
     return {
         "step": "Data preprocessing",
         "input_record_count": len(raw_records),
+        "cleaned_input_record_count": len(cleaned_raw_records),
         "output_record_count": len(processed_records),
         "removed_fields": sorted(set(removed_fields)),
+        "cleaning": {
+            "incomplete_duplicate_order_items": incomplete_duplicate_report,
+            "zero_quantity_price_items": zero_quantity_price_report,
+        },
         "missing_values": _missing_values_report(processed_records),
         "duplicates": {
             "exact_duplicate_rows": exact_duplicate_count,
@@ -220,6 +236,153 @@ def _preprocess_record(
         processed.pop(field, None)
 
     return _select_fields(processed, config.output_fields)
+
+
+def _drop_incomplete_duplicate_order_items(
+    records: Sequence[Record],
+) -> tuple[list[Record], Record]:
+    groups: dict[tuple[str, str], list[tuple[int, Record]]] = {}
+    for index, record in enumerate(records):
+        product_key = _product_key(record)
+        if product_key is None:
+            continue
+        groups.setdefault((_order_key(record), product_key), []).append((index, record))
+
+    indexes_to_drop: set[int] = set()
+    affected_groups: list[Record] = []
+    for (order_key, product_key), items in sorted(groups.items()):
+        if len(items) < 2:
+            continue
+
+        complete_items = [
+            (index, record) for index, record in items if _has_quantity_and_price(record)
+        ]
+        incomplete_items = [
+            (index, record) for index, record in items if _missing_quantity_and_price(record)
+        ]
+        if not complete_items or not incomplete_items:
+            continue
+
+        indexes_to_drop.update(index for index, _ in incomplete_items)
+        affected_groups.append(
+            {
+                "order_key": order_key,
+                "product_key": product_key,
+                "dropped_record_count": len(incomplete_items),
+                "kept_record_count": len(complete_items),
+                "dropped_samples": [
+                    _cleaning_sample(index=index, record=record)
+                    for index, record in incomplete_items[:3]
+                ],
+                "kept_samples": [
+                    _cleaning_sample(index=index, record=record)
+                    for index, record in complete_items[:3]
+                ],
+            }
+        )
+
+    filtered_records = [
+        dict(record) for index, record in enumerate(records) if index not in indexes_to_drop
+    ]
+    return filtered_records, {
+        "rule": (
+            "Within one order, drop duplicate product rows that have no usable quantity and "
+            "no usable price when another row for the same product has both."
+        ),
+        "dropped_record_count": len(indexes_to_drop),
+        "affected_group_count": len(affected_groups),
+        "sample_groups": affected_groups[:10],
+    }
+
+
+def _drop_zero_quantity_price_items(records: Sequence[Record]) -> tuple[list[Record], Record]:
+    indexes_to_drop = {
+        index for index, record in enumerate(records) if _zero_quantity_price_item(record)
+    }
+    filtered_records = [
+        dict(record) for index, record in enumerate(records) if index not in indexes_to_drop
+    ]
+    dropped_records = [
+        _cleaning_sample(index=index, record=record)
+        for index, record in enumerate(records)
+        if index in indexes_to_drop
+    ]
+    return filtered_records, {
+        "rule": (
+            "Drop order-item rows where quantity, ordered quantity, delivered quantity, "
+            "total price, unit price, and price per unit are all zero."
+        ),
+        "dropped_record_count": len(indexes_to_drop),
+        "checked_fields": [
+            "quantity",
+            "quantity_ordered",
+            "quantity_delivered",
+            "price_total",
+            "price_unit",
+            "price_per_unit",
+        ],
+        "sample_records": dropped_records[:10],
+    }
+
+
+def _zero_quantity_price_item(record: Mapping[str, Any]) -> bool:
+    fields = (
+        "quantity",
+        "quantity_ordered",
+        "quantity_delivered",
+        "price_total",
+        "price_unit",
+        "price_per_unit",
+    )
+    return all(_number_equals(record.get(field), 0.0) for field in fields)
+
+
+def _product_key(record: Mapping[str, Any]) -> str | None:
+    for field in ("product_id", "product_slug", "product_name"):
+        value = _string_value(record.get(field))
+        if value is not None:
+            return f"{field}:{value.lower()}"
+    return None
+
+
+def _has_quantity_and_price(record: Mapping[str, Any]) -> bool:
+    return _quantity_positive(record) and _price_positive(record)
+
+
+def _missing_quantity_and_price(record: Mapping[str, Any]) -> bool:
+    return not _quantity_positive(record) and not _price_positive(record)
+
+
+def _quantity_positive(record: Mapping[str, Any]) -> bool:
+    return any(
+        _number_gt(record.get(field), 0.0)
+        for field in ("quantity_ordered", "quantity_delivered", "quantity")
+    )
+
+
+def _price_positive(record: Mapping[str, Any]) -> bool:
+    return any(
+        _number_gt(record.get(field), 0.0)
+        for field in ("price_total", "price_unit", "price_per_unit")
+    )
+
+
+def _cleaning_sample(index: int, record: Mapping[str, Any]) -> Record:
+    return {
+        "row_index": index,
+        "shop": record.get("shop"),
+        "order_date": record.get("order_date"),
+        "product_name": record.get("product_name"),
+        "main_category": record.get("main_category"),
+        "category": record.get("category"),
+        "quantity_ordered": record.get("quantity_ordered"),
+        "quantity_delivered": record.get("quantity_delivered"),
+        "quantity": record.get("quantity"),
+        "unit": record.get("unit"),
+        "price_total": record.get("price_total"),
+        "price_unit": record.get("price_unit"),
+        "currency": record.get("currency"),
+    }
 
 
 def _quantity_ordered_feature(record: Mapping[str, Any]) -> float | None:
@@ -591,6 +754,16 @@ def _number_lte(value: Any, threshold: float) -> bool:
     return number is not None and number <= threshold
 
 
+def _number_gt(value: Any, threshold: float) -> bool:
+    number = _to_float(value)
+    return number is not None and number > threshold
+
+
+def _number_equals(value: Any, expected: float) -> bool:
+    number = _to_float(value)
+    return number is not None and abs(number - expected) <= 0.0001
+
+
 def _to_float(value: Any) -> float | None:
     if value is None or isinstance(value, bool):
         return None
@@ -602,6 +775,13 @@ def _to_float(value: Any) -> float | None:
         except ValueError:
             return None
     return None
+
+
+def _string_value(value: Any) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _is_missing(value: Any) -> bool:
