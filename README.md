@@ -158,19 +158,6 @@ The main acceptance artifact is `project_quality_report`. It contains:
 - recommended actions;
 - links to child quality reports.
 
-Start with [docs/index.md](docs/index.md) for the full documentation package. A Russian copy is
-available at [docs/ru/index.md](docs/ru/index.md).
-
-Key pages:
-
-- [Project overview](docs/project_overview.md)
-- [Pipeline walkthrough](docs/pipeline_walkthrough.md)
-- [Testing strategy](docs/testing_strategy.md)
-- [Metrics reference](docs/metrics_reference.md)
-- [Model quality decision guide](docs/model_quality_decision.md)
-- [Configuration reference](docs/configuration_reference.md)
-- [Interview preparation](docs/interview_prep.md)
-
 ## Quality Checks
 
 Run locally:
