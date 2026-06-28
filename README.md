@@ -28,25 +28,12 @@ The project builds a small end-to-end ML quality pipeline:
 ```text
 config/
   defaults.jsonc
-docs/
-  index.md
-  project_overview.md
-  pipeline_walkthrough.md
-  testing_strategy.md
-  metrics_reference.md
-  model_quality_decision.md
-  configuration_reference.md
-  interview_prep.md
 src/ai_testing/
   cli/
     parser.py
     commands/
   core/
   data/
-    acquisition/
-    preprocessing/
-    splitting/
-    classification_preprocessing/
   models/
     training/
     validation/
