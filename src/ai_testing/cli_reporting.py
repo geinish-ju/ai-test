@@ -31,12 +31,16 @@ from ai_testing.reporting import (
     build_run_markdown_report,
 )
 from ai_testing.run_tracking import (
+    DVCVersioningConfig,
+    MLflowTrackingConfig,
+    MLOpsPublishConfig,
     RunTrackingConfig,
     build_run_report,
     build_stage_history_markdown,
     build_stage_metric_history_markdown,
     compact_run_history,
     latest_run_report_path,
+    publish_run_to_mlops,
     update_run_index,
 )
 
@@ -287,6 +291,32 @@ def track_run_command(args: argparse.Namespace) -> None:
     markdown_output_path = output_path.with_suffix(".md")
     write_json(report, output_path)
     markdown_output_path.write_text(build_run_markdown_report(report), encoding="utf-8")
+    mlops = publish_run_to_mlops(
+        report,
+        run_report_path=output_path,
+        markdown_report_path=markdown_output_path,
+        config=MLOpsPublishConfig(
+            mlflow=MLflowTrackingConfig(
+                enabled=bool(args.mlflow_tracking),
+                tracking_uri=str(args.mlflow_tracking_uri),
+                experiment_name=str(args.mlflow_experiment_name),
+                log_artifacts=bool(args.mlflow_log_artifacts),
+                artifact_types=tuple(args.mlflow_artifact_types),
+                fail_on_error=bool(args.mlflow_fail_on_error),
+            ),
+            dvc=DVCVersioningConfig(
+                enabled=bool(args.dvc_versioning),
+                command=str(args.dvc_command),
+                artifact_names=tuple(args.dvc_artifact_names),
+                push=bool(args.dvc_push),
+                remote=str(args.dvc_remote),
+                fail_on_error=bool(args.dvc_fail_on_error),
+            ),
+        ),
+    )
+    report["mlops"] = mlops
+    write_json(report, output_path)
+    markdown_output_path.write_text(build_run_markdown_report(report), encoding="utf-8")
     index = update_run_index(index_output_path, report, output_path)
     record_stage_result(
         args,
@@ -316,6 +346,8 @@ def track_run_command(args: argparse.Namespace) -> None:
                 "baseline_run_id": comparison.get("baseline_run_id"),
                 "improved_metric_count": delta_summary.get("improved_metric_count"),
                 "regressed_metric_count": delta_summary.get("regressed_metric_count"),
+                "mlflow_status": mapping(mlops.get("mlflow")).get("status"),
+                "dvc_status": mapping(mlops.get("dvc")).get("status"),
             },
             ensure_ascii=False,
             indent=2,

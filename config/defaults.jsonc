@@ -605,6 +605,59 @@
     }
   },
 
+  "mlops": {
+    "mlflow": {
+      // Optional MLflow Tracking backend. Enable with --mlflow-tracking or this flag.
+      "enabled": false,
+
+      // Local file tracking URI by default. Use http(s) URI for a shared tracking server.
+      "tracking_uri": "file:./mlruns",
+
+      // Experiment that groups AI testing pipeline runs.
+      "experiment_name": "ai-grocery-testing",
+
+      // Log non-dataset artifacts such as reports, manifests, and model artifacts.
+      "log_artifacts": true,
+      "artifact_types": ["report", "manifest", "model"],
+
+      // Keep track-run resilient by default when optional MLflow is unavailable.
+      "fail_on_error": false
+    },
+
+    "dvc": {
+      // Optional DVC versioning backend. Enable explicitly because dvc add changes metadata files.
+      "enabled": false,
+      "command": "dvc",
+
+      // Artifacts selected for DVC tracking. Raw exports stay out by default.
+      "artifact_names": [
+        "processed_grocery_dataset",
+        "split_manifest",
+        "train_validation_dataset",
+        "test_dataset",
+        "classification_manifest",
+        "classification_train_validation_dataset",
+        "classification_test_dataset",
+        "association_model",
+        "category_model",
+        "category_estimator",
+        "input_data_quality_report",
+        "association_model_quality_report",
+        "category_model_quality_report",
+        "project_quality_report",
+        "drift_test_report",
+        "category_explainability_report",
+        "llm_exploratory_test_plan",
+        "latest_markdown_run_report"
+      ],
+
+      // Push to a DVC remote only when configured intentionally.
+      "push": false,
+      "remote": "",
+      "fail_on_error": false
+    }
+  },
+
   "reporting": {
     "run_markdown": {
       // By default, render the latest tracked run into a human-readable Markdown report.

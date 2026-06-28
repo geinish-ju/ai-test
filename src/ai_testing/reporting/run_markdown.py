@@ -28,6 +28,7 @@ def build_run_markdown_report(
     _add_metric_deltas(lines, run_report, report_config.max_metric_deltas)
     _add_drift(lines, run_report, report_config.max_drift_distributions)
     _add_versions(lines, run_report, report_config.max_artifacts)
+    _add_mlops(lines, run_report)
     _add_stage_reports(lines, run_report)
     lines.append("")
     return "\n".join(lines)
@@ -208,6 +209,32 @@ def _add_versions(
             f"| `{name}` | `{_text(artifact.get('type'), '')}` | "
             f"`{_text(artifact.get('exists'), '')}` | `{_short_sha(artifact.get('sha256'))}` |"
         )
+
+
+def _add_mlops(lines: list[str], run_report: Mapping[str, Any]) -> None:
+    mlops = _mapping(run_report.get("mlops"))
+    if not mlops:
+        return
+
+    mlflow = _mapping(mlops.get("mlflow"))
+    dvc = _mapping(mlops.get("dvc"))
+    lines.extend(
+        [
+            "",
+            "## MLOps Backends",
+            "",
+            "| Backend | Status | Details |",
+            "|---|---:|---|",
+            (
+                f"| `MLflow` | `{_text(mlflow.get('status'), 'unknown')}` | "
+                f"`{_text(mlflow.get('tracking_uri'), _text(mlflow.get('reason'), ''))}` |"
+            ),
+            (
+                f"| `DVC` | `{_text(dvc.get('status'), 'unknown')}` | "
+                f"`tracked={_text(dvc.get('tracked_artifact_count'), '0')}` |"
+            ),
+        ]
+    )
 
 
 def _add_stage_reports(lines: list[str], run_report: Mapping[str, Any]) -> None:

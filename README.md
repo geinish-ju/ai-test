@@ -42,13 +42,13 @@ Current stack:
 - GitHub Actions CI
 - Mermaid architecture and sequence diagrams
 - Markdown run and stage reports
+- optional `MLflow` experiment tracking
+- optional `DVC` data/model/report versioning
 - Git
 
 Planned reporting and MLOps stack:
 
 - `matplotlib` / `seaborn` for analysis charts
-- `MLflow` for experiment tracking
-- `DVC` for data and model versioning
 - `pytest` for pipeline checks
 
 ## Project Structure
@@ -101,6 +101,7 @@ src/ai_testing/
     generic_markdown.py       # JSON report to Markdown table renderer
     run_markdown.py           # human-readable run report generation
   run_tracking/
+    mlops.py                  # optional MLflow logging and DVC artifact versioning
     tracker.py                # run registry, artifact hashes, metric deltas, drift summary
     stage_history.py          # per-stage command execution history and deltas
   sample_data.py              # synthetic data for smoke checks
@@ -347,6 +348,7 @@ Generate explainability, LLM exploratory, and run tracking reports:
 ai-test explain-category-classifier
 ai-test create-llm-exploratory-plan
 ai-test track-run --run-name "current-clean-pipeline"
+ai-test track-run --run-name "mlops-run" --mlflow-tracking --dvc-versioning
 ai-test test-drift
 ai-test generate-run-report
 ai-test generate-markdown-reports
@@ -564,6 +566,18 @@ are available.
 ai-test track-run --run-name "experiment-name"
 ai-test run-history
 ```
+
+Optional MLflow/DVC integration:
+
+```powershell
+python -m pip install -e ".[mlops]"
+dvc init
+ai-test track-run --run-name "experiment-name" --mlflow-tracking --dvc-versioning
+```
+
+MLflow receives run parameters, metrics, tags, and selected non-dataset artifacts. DVC tracks the
+configured processed datasets, split manifests, models, and quality reports as lightweight `.dvc`
+metadata. Raw exports are not selected for DVC by default.
 
 Look at these local artifacts for run comparisons:
 

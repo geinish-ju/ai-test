@@ -132,6 +132,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     project_quality_config = config_section(app_config, "project_quality")
     run_tracking_config = config_section(app_config, "run_tracking")
+    mlops_config = config_section(app_config, "mlops")
+    mlflow_config = config_section(mlops_config, "mlflow")
+    dvc_config = config_section(mlops_config, "dvc")
     drift_testing_config = config_section(app_config, "drift_testing")
     reporting_config = config_section(app_config, "reporting", "run_markdown")
     markdown_reports_config = config_section(app_config, "reporting", "markdown_reports")
@@ -1345,9 +1348,94 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=config_bool(run_tracking_config, "compare_to_latest", True),
         help="Compare this run to the latest run in the run index when no baseline is provided",
     )
+    track_run_parser.add_argument(
+        "--mlflow-tracking",
+        action=argparse.BooleanOptionalAction,
+        default=config_bool(mlflow_config, "enabled", False),
+        help="Log the tracked run to MLflow",
+    )
+    track_run_parser.add_argument(
+        "--mlflow-tracking-uri",
+        default=config_str(mlflow_config, "tracking_uri", "file:./mlruns"),
+        help="MLflow tracking URI",
+    )
+    track_run_parser.add_argument(
+        "--mlflow-experiment-name",
+        default=config_str(mlflow_config, "experiment_name", "ai-grocery-testing"),
+        help="MLflow experiment name",
+    )
+    track_run_parser.add_argument(
+        "--mlflow-log-artifacts",
+        action=argparse.BooleanOptionalAction,
+        default=config_bool(mlflow_config, "log_artifacts", True),
+        help="Log selected run artifacts to MLflow",
+    )
+    track_run_parser.add_argument(
+        "--mlflow-fail-on-error",
+        action=argparse.BooleanOptionalAction,
+        default=config_bool(mlflow_config, "fail_on_error", False),
+        help="Fail track-run when MLflow logging fails",
+    )
+    track_run_parser.add_argument(
+        "--dvc-versioning",
+        action=argparse.BooleanOptionalAction,
+        default=config_bool(dvc_config, "enabled", False),
+        help="Run dvc add for selected data/model/report artifacts",
+    )
+    track_run_parser.add_argument(
+        "--dvc-command",
+        default=config_str(dvc_config, "command", "dvc"),
+        help="DVC CLI command path",
+    )
+    track_run_parser.add_argument(
+        "--dvc-push",
+        action=argparse.BooleanOptionalAction,
+        default=config_bool(dvc_config, "push", False),
+        help="Run dvc push after dvc add",
+    )
+    track_run_parser.add_argument(
+        "--dvc-remote",
+        default=config_str(dvc_config, "remote", ""),
+        help="Optional DVC remote name used with dvc push",
+    )
+    track_run_parser.add_argument(
+        "--dvc-fail-on-error",
+        action=argparse.BooleanOptionalAction,
+        default=config_bool(dvc_config, "fail_on_error", False),
+        help="Fail track-run when DVC versioning fails",
+    )
     track_run_parser.set_defaults(
         stage_report_paths=_run_tracking_stage_report_paths(run_tracking_config),
         artifact_paths=_run_tracking_artifact_paths(run_tracking_config),
+        mlflow_artifact_types=config_str_tuple(
+            mlflow_config,
+            "artifact_types",
+            ("report", "manifest", "model"),
+        ),
+        dvc_artifact_names=config_str_tuple(
+            dvc_config,
+            "artifact_names",
+            (
+                "processed_grocery_dataset",
+                "split_manifest",
+                "train_validation_dataset",
+                "test_dataset",
+                "classification_manifest",
+                "classification_train_validation_dataset",
+                "classification_test_dataset",
+                "association_model",
+                "category_model",
+                "category_estimator",
+                "input_data_quality_report",
+                "association_model_quality_report",
+                "category_model_quality_report",
+                "project_quality_report",
+                "drift_test_report",
+                "category_explainability_report",
+                "llm_exploratory_test_plan",
+                "latest_markdown_run_report",
+            ),
+        ),
     )
 
     run_history_parser = subparsers.add_parser(
