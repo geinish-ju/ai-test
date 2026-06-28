@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from ai_testing.input_data_testing import InputDataTestConfig
+from ai_testing.quality.input_data import InputDataTestConfig
 
 Record = dict[str, Any]
 

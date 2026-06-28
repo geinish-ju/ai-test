@@ -15,14 +15,14 @@ from ai_testing.cli_common import (
     write_json,
 )
 from ai_testing.core import artifact_metadata
-from ai_testing.input_data_testing import InputDataTestConfig, test_input_data
-from ai_testing.ml_model_testing import (
+from ai_testing.quality.input_data import InputDataTestConfig, test_input_data
+from ai_testing.quality.ml_model import (
     AssociationMLModelTestConfig,
     TextClassifierMLModelTestConfig,
     test_association_ml_model,
     test_text_classifier_ml_model,
 )
-from ai_testing.project_quality import aggregate_quality_reports
+from ai_testing.quality.project import aggregate_quality_reports
 
 
 def _test_input_data(args: argparse.Namespace) -> None:

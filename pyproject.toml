@@ -1,5 +1,5 @@
 [project]
-name = "ai-test-framework"
+name = "ai-test-project"
 version = "0.1.0"
 description = "Personal grocery order data acquisition adapters for AI testing datasets."
 readme = "README.md"

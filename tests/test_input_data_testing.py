@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from ai_testing.input_data_testing import (
+from ai_testing.quality.input_data import (
     InputDataFold,
     InputDataTestConfig,
 )
-from ai_testing.input_data_testing import (
+from ai_testing.quality.input_data import (
     test_input_data as run_input_data_test,
 )
 

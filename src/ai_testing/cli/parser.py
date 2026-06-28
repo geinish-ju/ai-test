@@ -12,12 +12,12 @@ from ai_testing.config import (
     config_str,
     config_str_tuple,
 )
-from ai_testing.data_preprocessing import (
+from ai_testing.data.preprocessing import (
     DEFAULT_EXACT_TIME_FIELDS,
     DEFAULT_IDENTIFIER_FIELDS,
     DEFAULT_OUTPUT_FIELDS,
 )
-from ai_testing.drift_testing import RunDriftTestConfig
+from ai_testing.quality.drift import RunDriftTestConfig
 
 
 def build_parser(

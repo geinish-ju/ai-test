@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from ai_testing.cli_common import resolve_cookies
-from ai_testing.data_acquisition import (
+from ai_testing.data.acquisition import (
     KosikApiClient,
     KosikOrderHistoryAdapter,
     RohlikApiClient,

@@ -1,6 +1,4 @@
-"""Personal grocery order data acquisition adapters."""
-
-from ai_testing.data.acquisition import KosikApiClient, KosikOrderHistoryAdapter
+from ai_testing.data.acquisition.kosik import KosikApiClient, KosikOrderHistoryAdapter
 from ai_testing.data.acquisition.rohlik import RohlikApiClient, RohlikOrderHistoryAdapter
 
 __all__ = [

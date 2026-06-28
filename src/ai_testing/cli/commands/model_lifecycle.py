@@ -5,20 +5,20 @@ import json
 from pathlib import Path
 
 from ai_testing.cli_common import read_json_object, read_records, record_stage_result, write_json
-from ai_testing.model_testing import (
+from ai_testing.models.testing import (
     AssociationTestConfig,
     TextClassifierTestConfig,
     test_association_rules,
     test_text_classifier,
 )
-from ai_testing.model_training import (
+from ai_testing.models.training import (
     AssociationRulesConfig,
     TextClassifierConfig,
     save_text_classifier_artifact,
     train_association_rules,
     train_text_classifier,
 )
-from ai_testing.model_validation import (
+from ai_testing.models.validation import (
     AssociationValidationConfig,
     AssociationValidationFold,
     TextClassificationValidationConfig,

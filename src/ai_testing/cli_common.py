@@ -8,7 +8,10 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from ai_testing.config import default_config_path, load_config
-from ai_testing.run_tracking import StageExecutionTrackingConfig, record_stage_execution
+from ai_testing.observability.run_tracking import (
+    StageExecutionTrackingConfig,
+    record_stage_execution,
+)
 
 
 def extract_config_path(argv: Sequence[str] | None) -> tuple[str, list[str]]:

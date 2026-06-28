@@ -3,14 +3,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from ai_testing.ml_model_testing import (
+from ai_testing.quality.ml_model import (
     AssociationMLModelTestConfig,
     TextClassifierMLModelTestConfig,
 )
-from ai_testing.ml_model_testing import (
+from ai_testing.quality.ml_model import (
     test_association_ml_model as run_association_ml_model_test,
 )
-from ai_testing.ml_model_testing import (
+from ai_testing.quality.ml_model import (
     test_text_classifier_ml_model as run_text_classifier_ml_model_test,
 )
 

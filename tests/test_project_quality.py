@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from ai_testing.project_quality import aggregate_quality_reports
-from ai_testing.reporting import build_markdown_report
+from ai_testing.observability.reporting import build_markdown_report
+from ai_testing.quality.project import aggregate_quality_reports
 
 Record = dict[str, Any]
 

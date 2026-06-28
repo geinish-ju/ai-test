@@ -4,7 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ai_testing.run_tracking import RunTrackingConfig, build_run_report
+from ai_testing.observability.run_tracking import RunTrackingConfig, build_run_report
 
 Record = dict[str, Any]
 

@@ -3,6 +3,9 @@
 This project treats model acceptance as a documented quality decision, not as a single accuracy
 number.
 
+For the wider context, read [Testing Strategy](testing_strategy.md) before this page and
+[Metrics Reference](metrics_reference.md) when a metric needs interpretation.
+
 ## Primary Evidence
 
 Use these artifacts together:

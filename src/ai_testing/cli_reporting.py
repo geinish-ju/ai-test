@@ -15,22 +15,17 @@ from ai_testing.cli_common import (
     write_json,
 )
 from ai_testing.core import artifact_metadata
-from ai_testing.drift_testing import RunDriftTestConfig, test_run_drift
-from ai_testing.llm_exploratory_testing import (
-    LLMExploratoryTestingConfig,
-    create_llm_exploratory_test_plan,
-)
-from ai_testing.model_explainability import (
+from ai_testing.models.explainability import (
     TextClassifierExplainabilityConfig,
     explain_text_classifier,
 )
-from ai_testing.reporting import (
+from ai_testing.observability.reporting import (
     MarkdownReportConfig,
     RunMarkdownReportConfig,
     build_markdown_report,
     build_run_markdown_report,
 )
-from ai_testing.run_tracking import (
+from ai_testing.observability.run_tracking import (
     DVCVersioningConfig,
     MLflowTrackingConfig,
     MLOpsPublishConfig,
@@ -42,6 +37,11 @@ from ai_testing.run_tracking import (
     latest_run_report_path,
     publish_run_to_mlops,
     update_run_index,
+)
+from ai_testing.quality.drift import RunDriftTestConfig, test_run_drift
+from ai_testing.quality.llm_exploratory import (
+    LLMExploratoryTestingConfig,
+    create_llm_exploratory_test_plan,
 )
 
 

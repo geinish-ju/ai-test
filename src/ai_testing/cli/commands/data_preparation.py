@@ -4,14 +4,14 @@ import argparse
 import json
 from pathlib import Path
 
-from ai_testing.classification_preprocessing import (
+from ai_testing.cli_common import read_records, record_stage_result, write_json
+from ai_testing.data.classification_preprocessing import (
     ClassificationPreprocessingConfig,
     build_classification_records,
 )
-from ai_testing.cli_common import read_records, record_stage_result, write_json
-from ai_testing.data_preprocessing import PreprocessingConfig, preprocess_grocery_records
-from ai_testing.data_splitting import DatasetSplitConfig, split_dataset_records
-from ai_testing.input_data_testing import InputDataFold
+from ai_testing.data.preprocessing import PreprocessingConfig, preprocess_grocery_records
+from ai_testing.data.splitting import DatasetSplitConfig, split_dataset_records
+from ai_testing.quality.input_data import InputDataFold
 
 
 def _preprocess_data(args: argparse.Namespace) -> None:

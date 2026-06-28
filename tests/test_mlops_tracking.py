@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ai_testing.reporting import build_run_markdown_report
-from ai_testing.run_tracking import (
+from ai_testing.observability.reporting import build_run_markdown_report
+from ai_testing.observability.run_tracking import (
     DVCVersioningConfig,
     MLflowTrackingConfig,
     MLOpsPublishConfig,
     publish_run_to_mlops,
 )
-from ai_testing.run_tracking.mlops import _ensure_mlflow_tracking_storage
+from ai_testing.observability.run_tracking.mlops import _ensure_mlflow_tracking_storage
 
 
 def test_mlops_publish_disabled_backends(tmp_path: Path) -> None:

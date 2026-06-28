@@ -1,6 +1,6 @@
 # AI Grocery Testing
 
-Python framework for practicing AI testing on grocery order data.
+Python project for practicing AI testing on grocery order data.
 
 The project builds a small end-to-end ML quality pipeline:
 
@@ -29,25 +29,40 @@ The project builds a small end-to-end ML quality pipeline:
 config/
   defaults.jsonc
 docs/
+  index.md
+  project_overview.md
+  pipeline_walkthrough.md
+  testing_strategy.md
+  metrics_reference.md
   model_quality_decision.md
+  configuration_reference.md
+  interview_prep.md
 src/ai_testing/
-  cli.py
+  cli/
+    parser.py
+    commands/
+  core/
+  data/
+    acquisition/
+    preprocessing/
+    splitting/
+    classification_preprocessing/
+  models/
+    training/
+    validation/
+    testing/
+    explainability/
+  quality/
+    input_data/
+    ml_model/
+    project/
+    drift/
+    llm_exploratory/
+  observability/
+    reporting/
+    run_tracking/
   cli_common.py
   cli_reporting.py
-  core/
-  data_acquisition/
-  data_preprocessing/
-  data_splitting/
-  classification_preprocessing/
-  model_training/
-  model_validation/
-  model_testing/
-  input_data_testing/
-  ml_model_testing/
-  drift_testing/
-  project_quality/
-  reporting/
-  run_tracking/
 tests/
 ```
 
@@ -156,7 +171,18 @@ The main acceptance artifact is `project_quality_report`. It contains:
 - recommended actions;
 - links to child quality reports.
 
-Decision rules are documented in [docs/model_quality_decision.md](docs/model_quality_decision.md).
+Start with [docs/index.md](docs/index.md) for the full documentation package. A Russian copy is
+available at [docs/ru/index.md](docs/ru/index.md).
+
+Key pages:
+
+- [Project overview](docs/project_overview.md)
+- [Pipeline walkthrough](docs/pipeline_walkthrough.md)
+- [Testing strategy](docs/testing_strategy.md)
+- [Metrics reference](docs/metrics_reference.md)
+- [Model quality decision guide](docs/model_quality_decision.md)
+- [Configuration reference](docs/configuration_reference.md)
+- [Interview preparation](docs/interview_prep.md)
 
 ## Quality Checks
 

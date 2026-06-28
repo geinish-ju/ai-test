@@ -1,4 +1,4 @@
-// Default local runtime settings for the AI Grocery Testing Framework.
+// Default local runtime settings for the AI Grocery Testing project.
 //
 // This file is JSONC: it follows JSON syntax but allows comments. Do not put cookies, tokens,
 // exported orders, or other personal data here. CLI arguments override these defaults.
