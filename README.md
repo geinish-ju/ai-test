@@ -57,7 +57,9 @@ Planned reporting and MLOps stack:
 config/
   defaults.jsonc              # non-secret runtime defaults
 src/ai_testing/
-  cli.py                      # ai-test commands
+  cli.py                      # ai-test entrypoint, parser, and core pipeline commands
+  cli_common.py               # shared CLI IO, config, cookie, and reporting helpers
+  cli_reporting.py            # run tracking, drift, Markdown, explainability, and LLM commands
   config.py                   # JSONC config loader
   core/
     reports.py                # common report/check schema
